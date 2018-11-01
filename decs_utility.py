@@ -36,6 +36,8 @@ method with properly configured arguments.
 # 5) run phase states
 # 6) vm_tags - set/manage VM tags
 # 7) vm_attributes - change VM attributes (name, annotation) after VM creation - do we need this in Ansible?
+# 8) verify that result['changed'] value is set correctly
+# 9) pylint and code style review.
 #
 
 class DECSController():
@@ -64,6 +66,12 @@ class DECSController():
         """
 
         self.amodule = arg_amodule  # AnsibleModule class instance
+
+        # Note that 'changed' is by default set to 'False'. If you plan to manage value of 'changed' key outside ot
+        # DECSController() class, make sure you only update to 'True' when you really change the state of the object
+        # being managed.
+        # The rare case when you will set it to False will usually be either module running in "check mode" or
+        # when you are about to call exit_json() or fail_json()
         self.result = {'failed': False, 'changed': False}
 
         self.authenticator = arg_authenticator.lower()
@@ -553,12 +561,18 @@ class DECSController():
             self.result['msg'] = "vm_portforwards() in check mode: port forwards configuration change requested."
             return
 
-        if not len(arg_pfw_specs):
-            # nothing to do
+        pfw_api_base = "/restmachine/cloudapi/portforwarding/"
+        pfw_api_params = dict(cloudspaceId=arg_vm_dict['cloudspaceid'],
+                              machineId=arg_vm_dict['id'])
+        api_resp = self.decs_api_call(requests.post, pfw_api_base + "list", pfw_api_params)
+        existing_pfw_list = json.loads(api_resp.content.decode('utf8'))
+
+        if not len(arg_pfw_specs) and not len(existing_pfw_list):
+            # Desired & existing port forwarding rules both empty - exit
             self.result['failed'] = False
-            self.result['changed'] = False
-            self.result['msg'] = ("vm_portforwards(): empty new port forwarding list - nothing to do. "
-                                  "No change applied to VM ID {}.").format(arg_vm_dict['id'])
+            # self.result['changed'] = self.result['changed'] or False
+            self.result['msg'] = ("vm_portforwards(): new and existing port forwarding lists both are empty - "
+                                  "nothing to do. No change applied to VM ID {}.").format(arg_vm_dict['id'])
             return
 
         # pfw_delta_list will be a list of dictionaries that describe _changes_ to the port forwarding rules
@@ -577,22 +591,19 @@ class DECSController():
         for requested_pfw in arg_pfw_specs:
             requested_pfw['new'] = True
 
-        pfw_api_base = "/restmachine/cloudapi/portforwarding/"
-        pfw_api_params = dict(cloudspaceId=arg_vm_dict['cloudspaceid'],
-                              machineId=arg_vm_dict['id'])
-        api_resp = self.decs_api_call(requests.post, pfw_api_base + "list", pfw_api_params)
-        if api_resp.status_code == 200:
-            existing_pfw_list = json.loads(api_resp.content.decode('utf8'))
-            for existing_pfw in existing_pfw_list:
-                existing_pfw['matched'] = False
-                for requested_pfw in arg_pfw_specs:
-                    if (existing_pfw['publicPort'] == requested_pfw['ext_port'] and
-                            existing_pfw['localPort'] == requested_pfw['int_port'] and
-                            existing_pfw['protocol'] == requested_pfw['proto']):
-                        # full match - existing rule stays:
-                        # mark requested rule spec as 'new'=False, existing rule spec as 'macthed'=True
-                        requested_pfw['new'] = False
-                        existing_pfw['matched'] = True
+        for existing_pfw in existing_pfw_list:
+            existing_pfw['matched'] = False
+            for requested_pfw in arg_pfw_specs:
+                # TODO: portforwarding API needs refactoring.
+                # NOTE!!! Another glitch in the API implementation - .../portforwarding/list returns ports as strings,
+                # while .../portforwarding/create expects them as integers!!!
+                if (int(existing_pfw['publicPort']) == requested_pfw['ext_port'] and
+                        int(existing_pfw['localPort']) == requested_pfw['int_port'] and
+                        existing_pfw['protocol'] == requested_pfw['proto']):
+                    # full match - existing rule stays:
+                    # mark requested rule spec as 'new'=False, existing rule spec as 'macthed'=True
+                    requested_pfw['new'] = False
+                    existing_pfw['matched'] = True
 
         # Scan arg_pfw_specs, find all records that have been marked 'new'=True, then copy them the pfw_delta_list
         # marking as action='create'
@@ -608,16 +619,18 @@ class DECSController():
         # marking as action='delete'
         for existing_pfw in existing_pfw_list:
             if not existing_pfw['matched']:
-                pfw_delta = dict(ext_port=existing_pfw['publicPort'],
-                                 int_port=existing_pfw['localPort'],
+                pfw_delta = dict(ext_port=int(existing_pfw['publicPort']),
+                                 int_port=int(existing_pfw['localPort']),
                                  proto=existing_pfw['protocol'],
                                  action='delete')
                 pfw_delta_list.append(pfw_delta)
 
+        self.result['pfw_debug_out'] = "{}".format(pfw_delta_list)
+
         if not len(pfw_delta_list):
             # nothing to do
             self.result['failed'] = False
-            self.result['changed'] = False
+            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = ("vm_portforwards() no difference between current and requested port "
                                   "forwarding rules found. No change applied to VM ID {}.").format(arg_vm_dict['id'])
             return
@@ -626,27 +639,24 @@ class DECSController():
         _, vdc_facts = self.vdc_find(arg_vdc_id=arg_vm_dict['cloudspaceid'])
 
         # Iterate over pfw_delta_list and first delete port forwarding rules marked for deletion,
-        # next create rules marked for creation.
-        # TODO: sort the list by 'action' key of the items so that we cen do in single pass?
-        # sorted_pfw_list = sorted( pfw_delta_list, key=lambda i: i['action'], reverse=True)
-        for pfw_delta in pfw_delta_list:
+        # next create the rules marked for creation.
+        sorted_pfw_delta_list = sorted(pfw_delta_list, key=lambda i: i['action'], reverse=True)
+        for pfw_delta in sorted_pfw_delta_list:
             if pfw_delta['action'] == 'delete':
                 pfw_api_params = dict(cloudspaceId=arg_vm_dict['cloudspaceid'],
                                       publicIp=vdc_facts['externalnetworkip'],
                                       publicPort=pfw_delta['ext_port'],
                                       proto=pfw_delta['proto'])
-                api_resp = self.decs_api_call(requests.post, pfw_api_base + 'deleteByPort', pfw_api_params)
+                self.decs_api_call(requests.post, pfw_api_base + 'deleteByPort', pfw_api_params)
                 # On success the above call will return here. On error it will abort execution by calling fail_json.
-
-        for pfw_delta in pfw_delta_list:
-            if pfw_delta['action'] == 'create':
+            elif pfw_delta['action'] == 'create':
                 pfw_api_params = dict(cloudspaceId=arg_vm_dict['cloudspaceid'],
                                       publicIp=vdc_facts['externalnetworkip'],
                                       publicPort=pfw_delta['ext_port'],
                                       machineId=arg_vm_dict['id'],
                                       localPort=pfw_delta['int_port'],
                                       protocol=pfw_delta['proto'])
-                api_resp = self.decs_api_call(requests.post, pfw_api_base + 'create', pfw_api_params)
+                self.decs_api_call(requests.post, pfw_api_base + 'create', pfw_api_params)
                 # On success the above call will return here. On error it will abort execution by calling fail_json.
 
         self.result['failed'] = False
@@ -679,12 +689,12 @@ class DECSController():
 
         if arg_vm_dict['status'] in NOP_STATES_FOR_POWER_CHANGE:
             self.result['failed'] = False
-            self.result['changed'] = False
-            self.result['msg'] = "No power state change required for VM ID {} in current state '{}'.".format(
-                arg_vm_dict['id'], arg_vm_dict['status'])
+            # self.result['changed'] = self.result['changed'] or False
+            self.result['msg'] = ("vm_powerstate(): no power state change possible for VM ID {} "
+                                  "in current state '{}'.").format(arg_vm_dict['id'], arg_vm_dict['status'])
             return
 
-        powerstate_api = "/restmachine/cloudapi/machines/start"
+        powerstate_api = ""  # this string will also be used as a flag to indicate that API call is necessary
         api_params = dict(machineId=arg_vm_dict['id'])
 
         if arg_vm_dict['status'] == "RUNNING":
@@ -692,18 +702,29 @@ class DECSController():
                 powerstate_api = "/restmachine/cloudapi/machines/pause"
             elif arg_target_state == 'poweredoff':
                 powerstate_api = "/restmachine/cloudapi/machines/stop"
-                api_params['force']=force_change
+                api_params['force'] = force_change
             elif arg_target_state == 'restarted':
                 powerstate_api = "/restmachine/cloudapi/machines/reboot"
         elif arg_vm_dict['status'] == "PAUSED" and arg_target_state in ('poweredon', 'restarted'):
                 powerstate_api = "/restmachine/cloudapi/machines/resume"
         elif arg_vm_dict['status'] == "HALTED" and arg_target_state in ('poweredon', 'restarted'):
-            pass  # we have already set powerstate_api to API start function at the beginning
+            powerstate_api = "/restmachine/cloudapi/machines/start"
+        else:
+            # VM seems to be in the desired power state already - do not call API
+            pass
 
-        self.decs_api_call(requests.post, powerstate_api, api_params)
-        # On success the above call will return here. On error it will abort execution by calling fail_json.
-        self.result['failed'] = False
-        self.result['changed'] = True
+        if powerstate_api != "":
+            self.decs_api_call(requests.post, powerstate_api, api_params)
+            # On success the above call will return here. On error it will abort execution by calling fail_json.
+            self.result['failed'] = False
+            self.result['changed'] = True
+        else:
+            self.result['failed'] = False
+            # self.result['changed'] = self.result['changed'] or False
+            self.result['msg'] = ("vm_powerstate(): no power state change required for VM ID {} its from current "
+                                  "state '{}' to desired state '{}'.").format(arg_vm_dict['id'],
+                                                                              arg_vm_dict['status'],
+                                                                              arg_target_state)
         return
 
     def vm_provision(self, arg_vdc_id, arg_vm_name,
@@ -841,7 +862,7 @@ class DECSController():
         if not arg_cpu and not arg_ram:
             # if both are 0 or Null - return immediately, as user did not mean to manage size
             self.result['failed'] = False
-            self.result['changed'] = False
+            # self.result['changed'] = self.result['changed'] or False
             return
 
         if not arg_cpu:
@@ -865,7 +886,7 @@ class DECSController():
         if arg_vm_dict['vcpus'] == arg_cpu and arg_vm_dict['memory'] == arg_ram:
             # no need to call API in this case, as requested size is not different from the current one
             self.result['failed'] = False
-            self.result['changed'] = False
+            # self.result['changed'] = self.result['changed'] or False
             return
 
         if ((arg_vm_dict['vcpus'] > arg_cpu or arg_vm_dict['memory'] > arg_ram) and
@@ -878,7 +899,7 @@ class DECSController():
                 wait_for_state_change = wait_for_state_change - 1
             if not wait_for_state_change:
                 self.result['failed'] = True
-                self.result['changed'] = False
+                # self.result['changed'] = self.result['changed'] or False
                 self.result['msg'] = ("vm_size() downsize of VM ID {} from CPU:RAM {}:{} to {}:{} was requested, "
                                       "but VM is in the state '{}' incompatible with down size operation").format(
                     arg_vm_dict['id'],
@@ -914,12 +935,9 @@ class DECSController():
         for image_record in image_list:
             if image_record['name'] == arg_osimage_name and image_record['status'] == "CREATED":
                 ret_image_facts = copy.deepcopy(image_record)
-                self.result['failed'] = False
-                self.result['changed'] = False
                 return ret_image_facts
 
         self.result['failed'] = True
-        self.result['changed'] = False
         self.result['msg'] = "Failed to find OS image by name '{}'.".format(arg_osimage_name)
         return None
 
@@ -969,7 +987,7 @@ class DECSController():
                 ret_vdc_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
             else:
                 self.result['failed'] = True
-                self.result['changed'] = False
+                # self.result['changed'] = self.result['changed'] or False
                 self.result['msg'] = ("vdc_find(): cannot locate VDC with VDC ID {}. HTTP code {}, "
                                       "response {}.").format(arg_vdc_id, api_resp.status_code, api_resp.reason)
                 self.amodule.fail_json(**self.result)
@@ -989,7 +1007,7 @@ class DECSController():
         else:
             # Both arg_vdc_id and arg_vdc_name are empty - there is no way to locate VDC in this case
             self.result['failed'] = True
-            self.result['changed'] = False
+            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = "vdc_find(): cannot locate VDC when VDC ID is zero and VDC name is empty string."
             self.amodule.fail_json(**self.result)
 
@@ -1049,7 +1067,7 @@ class DECSController():
 
         if arg_tenant_name == "":
             self.result['failed'] = True
-            self.result['changed'] = False
+            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = "Cannot find tenant by empty tenant name"
             self.amodule.fail_json(**self.result)
 

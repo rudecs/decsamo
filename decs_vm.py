@@ -37,16 +37,15 @@ options:
         required: no
     app_id:
         description:
-        - 'Application ID for authenticating to the DECS controller when C(authenticator) is set to C(oauth2).'
-        - 'This parameter is required when C(authenticator) is set to C(oauth2).'
+        - 'Application ID for authenticating to the DECS controller when I(authenticator=oauth2).'
+        - 'Required if I(authenticator=oauth2).'
         - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_ID 
            environment variable.'
         required: no
     app_secret:
         description:
-        - 'Application API secret used for authenticating to the DECS controller when C(authenticator) is set
-           to C(oauth2).'
-        - This parameter is required when C(authenticator) is set to C(oauth2) and ignored in other modes.
+        - 'Application API secret used for authenticating to the DECS controller when I(authenticator=oauth2).'
+        - This parameter is required when I(authenticator=oauth2) and ignored in other modes.
         - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_SECRET 
            environment variable.'
         required: no
@@ -63,16 +62,16 @@ options:
         - 'This parameter is required for VM creation, valid at VM creation time only and ignored for operations on
            existing VMs.'
         - 'Valid keys are:'
-        - ' - C(size) (integer) - size of the disk in GB'
-        - ' - C(model) (string) - model name of a storage resource provider. Valid model names are C(ovs), C(iscsi)'
-        - ' - C(pool) (string) - pool from which boot disk resource will be provisioned. Pool names are storage 
+        - ' - I(size) (integer) - size of the disk in GB'
+        - ' - I(model) (string) - model name of a storage resource provider. Valid model names are C(ovs), C(iscsi)'
+        - ' - I(pool) (string) - pool from which boot disk resource will be provisioned. Pool names are storage 
               model and DECS instance setup specific. If specified pool name is not found, it is expected that 
               the platform will provision from C(default) pool, which must always be present.'
         required: no
     controller_url:
         description:
         - URL of the DECS controller that will be contacted to manage the VM according to the specification.
-        - 'This parameter is always required regardless of the specified C(authenticator) type.'
+        - 'This parameter is always required regardless of the specified I(authenticator) type.'
         required: yes
     cpu:
         description:
@@ -84,9 +83,9 @@ options:
         required: no
     datacenter:
         description:
-        - Name of the datacenter where a new VDC to accomodate a VM being created should be provisioned first.
+        - Name of the data center where a new VDC to accommodate a VM being created should be provisioned first.
         - This parameter is required when creating VM and a non-existent target VDC is specified by name.
-        - Name of the datacenter should be exactly as defined in the target DECS controller.
+        - Name of the data center should be exactly as defined in the target DECS controller.
         - This parameter is case sensitive.
         required: no
     data_disks:
@@ -95,20 +94,20 @@ options:
         - This parameter is valid at VM creation time only and is ignored for operations on existing VMs.
         - Data disks resize or removal is not supported.
         - 'Each data disk is specified as a dictionary with the following keys:'
-        - ' - C(size) (integer) - size of the data disk in GB.'
-        - ' - C(model) (string) - model name of the resource storage provider to use for disk deployment. Valid model 
+        - ' - I(size) (integer) - size of the data disk in GB.'
+        - ' - I(model) (string) - model name of the resource storage provider to use for disk deployment. Valid model 
               names are C(ovs), C(iscsi).'
-        - ' - C(pool) (string) -  pool name to deploy data disk to. Pool names are specific to storage model and 
+        - ' - I(pool) (string) -  pool name to deploy data disk to. Pool names are specific to storage model and 
               DECS instance setup. If specified pool name is not found, it is expected that the platform will
-              provision from the “default” pool, which must always be present.'
+              provision from the C(default) pool, which must always be present.'
         required: no
     id:
         description:
         - ID of the VM.
         - Either this parameter or a combination of VM name and VDC ID is required to manage existing VM.
         - 'This parameter is not required (and ignored) when VM as VM ID is assigned by cloud platform automatically 
-           and cannot be changed afterwards. If existing VM is identified by C(id), then C(tenant), C(vdc_name) or 
-           C(vdc_id) parameters will be ignored.'
+           and cannot be changed afterwards. If existing VM is identified by I(id), then I(tenant), I(vdc_name) or 
+           I(vdc_id) parameters will be ignored.'
         required: no
     image_name:
         description:
@@ -119,34 +118,34 @@ options:
         required: no
     jwt:
         description:
-        - 'JWT (access token) for authenticating to the DECS controller when C(authenticator) is set to C(jwt).'
-        - 'This parameter is required if C(authenticator) is set to C(jwt) and ignored for other modes.'
+        - 'JWT (access token) for authenticating to the DECS controller when I(authenticator=jwt).'
+        - 'This parameter is required if I(authenticator=jwt) and ignored for other modes.'
         - If not specified in the playbook, the value will be taken from DECS_JWT environment variable.
         required: no
     name:
         description:
         - Name of the VM.
-        - 'To manage VM by C(name) you also need to specify C(vdc_name).'
-        - 'If both C(name) and C(id) are specified, C(name) will be ignored and C(id) used to locate the VM.'
+        - 'To manage VM by I(name) you also need to specify I(vdc_name).'
+        - 'If both I(name) and I(id) are specified, I(name) will be ignored and I(id) used to locate the VM.'
         required: no
     oauth2_url:
         description:
-        - 'URL of the oauth2 authentication provider to use when C(authenticator) is set to C(oauth2).'
-        - 'This parameter is required when when C(authenticator) is set to C(oauth2).'
+        - 'URL of the oauth2 authentication provider to use when I(authenticator=oauth2).'
+        - 'This parameter is required when when I(authenticator=oauth2).'
         - If not specified in the playbook, the value will be taken from DECS_OAUTH2_URL environment variable.
     password:
         description:
-        - 'Password for authenticating to the DECS controller when C(authenticator) is set to C(legacy).'
-        - 'This parameter is required if C(authenticator) is set to C(legacy).'
+        - 'Password for authenticating to the DECS controller when I(authenticator=legacy).'
+        - 'This parameter is required if I(authenticator=legacy).'
         - If not specified in the playbook, the value will be taken from DECS_PASSWORD environment variable.
         required: no
     port_forwards:
         description:
         - List of port forwarding rules for the VM.
         - 'Each rule is a dictionary with the following keys:'
-        - ' - C(ext_port) (integer) - external port number;'
-        - ' - C(int_port) (integer) - internal port number;'
-        - ' - C(proto) (string) – protocol name, valid values are C(tcp) and C(udp).'
+        - ' - I(ext_port) (integer) - external port number;'
+        - ' - I(int_port) (integer) - internal port number;'
+        - ' - I(proto) (string) - protocol name, valid values are C(tcp) and C(udp).'
         required: no
     ram:
         description:
@@ -159,27 +158,27 @@ options:
     state:
         description:
         - Specify the requested state of the virtual machine at the exit of the module.
-        - 'Regardless of C(state), if VM exists and is in one of [MIGRATING, DESTROYING, ERROR] states, do nothing.'
-        - 'If C(state) is set to C(present):'
+        - 'Regardless of I(state), if VM exists and is in one of [MIGRATING, DESTROYING, ERROR] states, do nothing.'
+        - 'If I(state=present):'
         - ' - VM does not exist, create it according to the specifications.'
         - ' - VM in one of [RUNNING, PAUSED, HALTED] states, attempt resize if necessary, change network if necessary.'
         - ' - VM in DELETED state, restore it.'
         - ' - VM in DESTROYED state, create it according to the specifications.'
-        - 'If C(state) is set to C(poweredon):'
+        - 'If I(state=poweredon):'
         - ' - VM does not exist, create it according to the specifications.'
         - ' - VM in RUNNING state, attempt resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, attempt resize if necessary, change network if necessary, next 
               start the VM.'
         - ' - VM in DELETED state, restore it.'
         - ' - VM in DESTROYED state, create it according to the specifications.'
-        - 'If C(state) is set to C(absent):'
+        - 'If I(state=absent):'
         - ' - VM in one of [RUNNING, PAUSED, HALTED] states, destroy it.'
         - ' - VM in one of [DELETED, DESTROYED] states, do nothing.'
-        - 'If C(state) is set to C(paused):'
+        - 'If I(state=paused):'
         - ' - VM in RUNNING state, pause the VM, resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
         - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
-        - 'If C(state) is set to C(paused):'
+        - 'If I(state=paused):'
         - ' - VM in RUNNING state, stop the VM, resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
         - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
@@ -194,37 +193,37 @@ options:
         description:
         - 'Name of the tenant under which the VM will be deployed (for new VMs) if VM deployment also required.
           deployment of a named VDC'
-        - 'This parameter is required for a new VM when target VDC is specified by C(vdc_name) and is not present.'
-        - 'This parameter is not required for a new VM when target VDC is specified by C(vdc_id).'
+        - 'This parameter is required for a new VM when target VDC is specified by I(vdc_name) and is not present.'
+        - 'This parameter is not required for a new VM when target VDC is specified by I(vdc_id).'
         required: no
     user:
         description:
-        - 'Name of the legacy user for authenticating to the DECS controller when C(authenticator) is set to C(legacy).'
-        - 'This parameter is required when C(authenticator) is set to C(legacy).'
+        - 'Name of the legacy user for authenticating to the DECS controller when I(authenticator=legacy).'
+        - 'This parameter is required when I(authenticator=legacy).'
         - If not specified in the playbook, the value will be taken from DECS_USER environment variable.
         required: no
     vdc_id:
         description:
         - ID of the VDC where a new VM will be deployed or an existing VM can be found.
-        - 'This parameter may be required when managing VM by its C(name).'
-        - 'This parameter is not required when VM is located by C(id).'
+        - 'This parameter may be required when managing VM by its I(name).'
+        - 'This parameter is not required when VM is located by I(id).'
         required: no
     vdc_name:
         description:
         - Name of the VDC where the VM will be deployed (for new VMs) or can be found (for existing VMs).
-        - 'This parameter may be required when managing VM by its C(name).'
-        - 'If both C(vdc_id) and C(vdc_name) are specified, C(vdc_name) will be ignored.'
+        - 'This parameter may be required when managing VM by its I(name).'
+        - 'If both I(vdc_id) and I(vdc_name) are specified, I(vdc_name) will be ignored.'
         required: no
     workflow_callback:
         description:
         - 'Callback URL that represents an application, which invokes this module (e.g. up-level orchestrator or 
           end-user portal) and may except out-of-band updates on progress / exit status of the module run.'
         - API call at this URL will be used to relay such information to the application.
-        - 'API call payload will include module-specific details about this module run and C(workflow_context).'
+        - 'API call payload will include module-specific details about this module run and I(workflow_context).'
         required: no
     workflow_context:
         description:
-        - 'Context data that will be included into the payload of the API call directed at C(workflow_callback) URL.'
+        - 'Context data that will be included into the payload of the API call directed at I(workflow_callback) URL.'
         - 'This context data is expected to uniquely identify the task carried out by this module invocation so 
            that up-level orchestrator could match returned information to the its internal entities.'
         required: no
@@ -416,9 +415,8 @@ def main():
             # nothing to do for an existing VM in the listed states regardless of the requested state
             decon.result['failed'] = False
             decon.result['changed'] = False
-            decon.result['msg'] = "No change can be done for existing VM ID {} because of its current status {}".format(
-                vm_id, vm_facts['status']
-            )
+            decon.result['msg'] = ("No change can be done for existing VM ID {} because of its current "
+                                   "status '{}'").format(vm_id, vm_facts['status'])
         elif vm_facts['status'] == "RUNNING":
             if amodule.params['state'] == 'absent':
                 decon.vm_delete(arg_vm_id=vm_id, arg_permanently=True)
@@ -445,7 +443,7 @@ def main():
         elif vm_facts['status'] == "DELETED":
             if amodule.params['state'] in ('present', 'poweredon'):
                 decon.vm_restore(arg_vm_id=vm_id)
-                # TODO - to manage port forwards and size we need updated vm facts
+                # TODO - to manage port forwards and size we need updated vm facts after VM is restored
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 # decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'absent':
