@@ -158,8 +158,31 @@ options:
         required: no
     state:
         description:
-        - text goes here
-        - more text goes on the next line
+        - Specify the requested state of the virtual machine at the exit of the module.
+        - 'Regardless of C(state), if VM exists and is in one of [MIGRATING, DESTROYING, ERROR] states, do nothing.'
+        - 'If C(state) is set to C(present):'
+        - ' - VM does not exist, create it according to the specifications.'
+        - ' - VM in one of [RUNNING, PAUSED, HALTED] states, attempt resize if necessary, change network if necessary.'
+        - ' - VM in DELETED state, restore it.'
+        - ' - VM in DESTROYED state, create it according to the specifications.'
+        - 'If C(state) is set to C(poweredon):'
+        - ' - VM does not exist, create it according to the specifications.'
+        - ' - VM in RUNNING state, attempt resize if necessary, change network if necessary.'
+        - ' - VM in one of [PAUSED, HALTED] states, attempt resize if necessary, change network if necessary, next 
+              start the VM.'
+        - ' - VM in DELETED state, restore it.'
+        - ' - VM in DESTROYED state, create it according to the specifications.'
+        - 'If C(state) is set to C(absent):'
+        - ' - VM in one of [RUNNING, PAUSED, HALTED] states, destroy it.'
+        - ' - VM in one of [DELETED, DESTROYED] states, do nothing.'
+        - 'If C(state) is set to C(paused):'
+        - ' - VM in RUNNING state, pause the VM, resize if necessary, change network if necessary.'
+        - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
+        - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
+        - 'If C(state) is set to C(paused):'
+        - ' - VM in RUNNING state, stop the VM, resize if necessary, change network if necessary.'
+        - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
+        - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
         default: present
         choices: [ present, absent, poweredon, poweredoff, paused ]
     tags:
