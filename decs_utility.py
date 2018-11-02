@@ -41,6 +41,9 @@ from ansible.module_utils.basic import AnsibleModule
 #
 
 class DECSController():
+    """DECSController is a utility class that holds target controller context and handles API requests formatting
+    based on the requested authentication type.
+    """
 
     VM_RESIZE_NOT = 0
     VM_RESIZE_DOWN = 1
@@ -52,16 +55,15 @@ class DECSController():
                  arg_app_id=None, arg_app_secret=None, arg_oauth2_url=None,
                  arg_user=None, arg_password=None,
                  arg_workflow_callback=None, arg_workflow_context=None):
-        """DECSController is a utility class that holds target controller context and handles API requests formatting
-        based on the requested authentication type.
-        Instantiate this class at the beginning of any DECS module run to have the following:
+        """
+        Instantiate DECSController() class at the beginning of any DECS module run to have the following:
         - check authentication parameters to make sure all required parameters are properly specified
         - initiate test connection to the specified DECS controller and validates supplied credentias
         - store validated authentication information for later use by DECC API calls
         - store AnsibleModule class instance to keep handy reference to the module context
 
         If any of the required parameters are missing or supplied authentication information is invalid, an error
-        message will be generated and execution aborted in way, that is lets Ansible to pick this information up and
+        message will be generated and execution aborted in a way, that lets Ansible to pick this information up and
         relay it upstream.
         """
 
@@ -71,7 +73,7 @@ class DECSController():
         # key outside of DECSController() class, make sure you only update to 'True' when you really change the state
         # of the object being managed.
         # The rare cases to reset it to False again will usually involve either module running in "check mode" or
-        # when you are about to call exit_json() or fail_json()
+        # when you detect and error and are about to call exit_json() or fail_json()
         self.result = {'failed': False, 'changed': False, 'waypoints': "Init"}
 
         self.authenticator = arg_authenticator.lower()
