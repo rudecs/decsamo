@@ -16,9 +16,9 @@ module: decs_vm
 short_description: Manage virtual machine in DECS cloud
 description: >
      This module can be used to create a virtual machine in Digital Energy cloud platform from a specified OS image,
-     modify virtual machine's CPU and RAM allocation, change its power state, restart guest OS and delete a virtual
-     machine thus releasing corresponding cloud resources.
-version_added: "1.0"
+     modify virtual machine's CPU and RAM allocation, change its power state, configure network port forwarding rules, 
+     restart guest OS and delete a virtual machine thus releasing corresponding cloud resources.
+version_added: "2.2"
 author:
      - Sergey Shubin <sergey.shubin@digitalenergy.online>
 requirements:
@@ -28,7 +28,7 @@ requirements:
 notes:
      - Environment variables can be used to pass selected parameters to the module, see details below.
      - Specified Oauth2 provider must be trusted by the DECS cloud controller on which JWT will be used.
-     - 'Similarly, JWT supplied in authenticator=jwt mode should be received from Oauth2 provider trusted by
+     - 'Similarly, JWT supplied in I(authenticator=jwt) mode should be received from Oauth2 provider trusted by
        the DECS cloud controller on which this JWT will be used.'
 options:
     annotation:
@@ -104,28 +104,29 @@ options:
     id:
         description:
         - ID of the VM.
-        - Either this parameter or a combination of VM name and VDC ID is required to manage existing VM.
-        - 'This parameter is not required (and ignored) when VM as VM ID is assigned by cloud platform automatically 
-           and cannot be changed afterwards. If existing VM is identified by I(id), then I(tenant), I(vdc_name) or 
-           I(vdc_id) parameters will be ignored.'
+        - 'Either I(id) or a combination of VM name I(name) and VDC related parameters (either I(vdc_id) or a pair of
+           I(tenant) and I(vdc_name) is required to manage an existing VM.'
+        - 'This parameter is not required (and ignored) when creating new VM as VM ID is assigned by cloud platform 
+           automatically and cannot be changed afterwards. If existing VM is identified by I(id), then I(tenant), 
+           I(vdc_name) or I(vdc_id) parameters will be ignored.'
         required: no
     image_name:
         description:
-        - Name of the OS image to use for new VM deployment.
+        - Name of the OS image to use for a new VM provisioning.
         - 'This parameter is valid at VM creation time only and is ignored for operations on existing VMs.'
-        - 'The specified name will be looked up in the target DECS controller and error will be generated if
+        - 'The specified image name will be looked up in the target DECS controller and error will be generated if
           no matching image is found'
         required: no
     jwt:
         description:
         - 'JWT (access token) for authenticating to the DECS controller when I(authenticator=jwt).'
-        - 'This parameter is required if I(authenticator=jwt) and ignored for other modes.'
+        - 'This parameter is required if I(authenticator=jwt) and ignored for other authentication modes.'
         - If not specified in the playbook, the value will be taken from DECS_JWT environment variable.
         required: no
     name:
         description:
         - Name of the VM.
-        - 'To manage VM by I(name) you also need to specify I(vdc_name).'
+        - 'To manage VM by I(name) you also need to specify either I(vdc_id) or a pair of I(vdc_name) and I(tenant).'
         - 'If both I(name) and I(id) are specified, I(name) will be ignored and I(id) used to locate the VM.'
         required: no
     oauth2_url:
@@ -136,7 +137,7 @@ options:
     password:
         description:
         - 'Password for authenticating to the DECS controller when I(authenticator=legacy).'
-        - 'This parameter is required if I(authenticator=legacy).'
+        - 'This parameter is required if I(authenticator=legacy) and ignored in other authentication modes.'
         - If not specified in the playbook, the value will be taken from DECS_PASSWORD environment variable.
         required: no
     port_forwards:
@@ -146,13 +147,18 @@ options:
         - ' - I(ext_port) (integer) - external port number;'
         - ' - I(int_port) (integer) - internal port number;'
         - ' - I(proto) (string) - protocol name, valid values are C(tcp) and C(udp).'
+        - 'If I(port_forwards) is specified for an existing VM and requested I(state) is one of C(present), C(paused),
+          C(poweredoff) or C(poweredon), then for each port forwarding rule specified:'
+        - ' - If the rule is not yet configured for the VM, it will be created;'
+        - ' - If the rule already exists for this VM, no action will be done;'
+        - ' - If some rule exists for this VM but not listed in the specified rules, it will be deleted.'
         required: no
     ram:
         description:
         - Size of RAM in MB to allocate to the VM.
         - This parameter is required for creating new VM and optional for other operations.
         - 'If you set this parameter for an existing VM, then the module will check if VM resize is necessary and do
-          it accordingly. Note that resize operation on a running VM may generate errors as not OS images support
+          it accordingly. Note that resize operation on a running VM may generate errors as not all OS images support
           hot resize feature.'
         required: no
     state:
@@ -186,20 +192,20 @@ options:
         choices: [ present, absent, poweredon, poweredoff, paused ]
     tags:
         description:
-        - String of custom tags to be assigned to the VM. 
+        - String of custom tags to be assigned to the VM (This feature is not implemented yet!). 
         - These tags are arbitrary text that can be used for grouping or indexing the VMs by other applications.
         required: no
     tenant:
         description:
-        - 'Name of the tenant under which the VM will be deployed (for new VMs) if VM deployment also required.
-          deployment of a named VDC'
+        - 'Name of the tenant under which the VM will be deployed (for new VMs) if VM deployment also requires
+          deployment of a named VDC (e.g. VDC I(vdc_name) is not found for I(tenant).'
         - 'This parameter is required for a new VM when target VDC is specified by I(vdc_name) and is not present.'
         - 'This parameter is not required for a new VM when target VDC is specified by I(vdc_id).'
         required: no
     user:
         description:
         - 'Name of the legacy user for authenticating to the DECS controller when I(authenticator=legacy).'
-        - 'This parameter is required when I(authenticator=legacy).'
+        - 'This parameter is required when I(authenticator=legacy) and ignored for other authentication modes.'
         - If not specified in the playbook, the value will be taken from DECS_USER environment variable.
         required: no
     vdc_id:
@@ -307,7 +313,7 @@ from ansible.module_utils.decs_utility import *
 
 def decs_vm_parameters():
     """Build and return a dictionary of parameters expected by decs_vm module in a form accepted
-    by AnsibleModule utility class"""
+    by AnsibleModule utility class."""
 
     return dict(
         annotation=dict(type='str',
