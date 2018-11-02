@@ -28,8 +28,7 @@ from ansible.module_utils.basic import AnsibleModule
 
 #
 # TODO: the following functionality to be implemented
-# 0) test legacy authenticator mode
-# 1) vm_ext_network - direct IP allocation to VM
+# 1) vm_ext_network - direct IP allocation to VM - requires user accessible API (not cloud broker level)
 # 2) vdc_delete - need decision if we allow force delete (any exising VMs to be deleted)
 # 3) vdc_portforwards (?) - do we need to manage it separate from VMs?
 # 4) workflow callbacks
@@ -40,7 +39,8 @@ from ansible.module_utils.basic import AnsibleModule
 # 9) test vm_restore() method and execution plans that involve vm_restore()
 #
 
-class DECSController():
+
+class DECSController(object):
     """DECSController is a utility class that holds target controller context and handles API requests formatting
     based on the requested authentication type.
     """
@@ -106,7 +106,7 @@ class DECSController():
                 self.result['msg'] = ("JWT based authentication requested, but no JWT specified. "
                                       "Use 'jwt' parameter or set 'DECS_JWT' environment variable")
                 self.amodule.fail_json(**self.result)
-        elif self.authenticator == "user":
+        elif self.authenticator == "legacy":
             if not arg_password:
                 self.result['failed'] = True
                 self.result['msg'] = ("Legacy user authentication requested, but no password specified. "
@@ -146,7 +146,7 @@ class DECSController():
             self.validate_jwt()  # this call will abort the script if validation fails
             jwt_decoded = jwt.decode(self.jwt, verify=False)
             self.decs_username = jwt_decoded['user'] + "@" + jwt_decoded['iss']
-        elif self.authenticator == "user":
+        elif self.authenticator == "legacy":
             # obtain session id from the DECS controller and thus validate the the legacy user
             self.validate_legacy_user()  # this call will abort the script if validation fails
             self.decs_username = self.user
@@ -298,7 +298,7 @@ class DECSController():
         @return: True on successful validation of the legacy user.
         """
 
-        if self.authenticator != 'user':
+        if self.authenticator != 'legacy':
             self.result['failed'] = True
             self.result['msg'] = "Cannot validate legacy user for incompatible authentication mode '{}'".format(
                 self.authenticator)
@@ -331,7 +331,10 @@ class DECSController():
             self.amodule.fail_json(**self.result)
             return False
 
-        self.session_key = api_resp.content.decode('utf8')
+        # Assign session key to the corresponding class attribute.
+        # Note that the above API call returns session key as a string with double quotes, which we need to
+        # remove before it can be used as 'session=...' parameter to DECS controller API calls
+        self.session_key = api_resp.content.decode('utf8').replace('"', '')
 
         return True
 
@@ -359,9 +362,9 @@ class DECSController():
 
         req_url = self.controller_url + arg_api_name
 
-        if self.authenticator == 'user':
+        if self.authenticator == 'legacy':
             arg_params['authkey'] = self.session_key
-        elif self.authenticator == 'jwt' or self.authenticator == 'oauth2':
+        elif self.authenticator in ('jwt', 'oauth2'):
             http_headers['Authorization'] = 'bearer {}'.format(self.jwt)
 
         while retry_counter > 0:
@@ -369,12 +372,12 @@ class DECSController():
                 api_resp = arg_req_function(req_url, params=arg_params, headers=http_headers)
             except requests.exceptions.ConnectionError:
                 self.result['failed'] = True
-                self.result['msg'] = "Failed to connect to '{}' when calling DECS API.".format(req_url)
+                self.result['msg'] = "Failed to connect to '{}' when calling DECS API.".format(api_resp.url)
                 self.amodule.fail_json(**self.result)
                 return None  # actually, this directive will never be executed as fail_json aborts the script
             except requests.exceptions.Timeout:
                 self.result['failed'] = True
-                self.result['msg'] = "Timeout when trying to connect to '{}' when calling DECS API.".format(req_url)
+                self.result['msg'] = "Timeout when trying to connect to '{}' when calling DECS API.".format(api_resp.url)
                 self.amodule.fail_json(**self.result)
                 return None
 
@@ -387,7 +390,7 @@ class DECSController():
             else:
                 self.result['failed'] = True
                 self.result['msg'] = ("Error when calling DECS API '{}', HTTP status code '{}', "
-                                      "reason '{}', parameters '{}'.").format(req_url,
+                                      "reason '{}', parameters '{}'.").format(api_resp.url,
                                                                               api_resp.status_code,
                                                                               api_resp.reason, arg_params)
                 self.amodule.fail_json(**self.result)
@@ -396,7 +399,7 @@ class DECSController():
         # if we get through here, it means that we were getting HTTP 503 while retrying - generate error
         self.result['failed'] = True
         self.result['msg'] = "Error when calling DECS API '{}', HTTP status code '{}', reason '{}'.". \
-            format(req_url, api_resp.status_code, api_resp.reason)
+            format(api_resp.url, api_resp.status_code, api_resp.reason)
         self.amodule.fail_json(**self.result)
         return None
 
@@ -445,6 +448,29 @@ class DECSController():
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
         self.result['changed'] = True
+        return
+
+    def vm_extnetwork(self):
+        """Manage external network allocation for the VM"""
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_extnetwork")
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = "vm_extnetwork() in check mode: external network configuration change requested."
+            return
+
+        # /cloudapi/externalnetwork/list
+        # accountId - required, integer
+
+        # /cloudapi/machines/attachExternalNetwork
+        # machineId - required, integer
+        # Returns anything besides HTTP response?
+
+        # /cloudapi/machines/detachExternalNetwork
+        # machineId - required, integer
+
         return
 
     def vm_facts(self, arg_vm_id=0,
@@ -1017,6 +1043,16 @@ class DECSController():
         #
         # TODO - not implemented yet - need use case for this method to decide on implementation
         #
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_portforwards")
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = ("vdc_portforwards() in check mode: port forwards configuration for VDC name '{}' "
+                                  "was requested.").format(arg_vdc_name)
+            return
+
         return
 
     def vdc_provision(self, arg_tenant_id, arg_datacenter, arg_vdc_name, arg_username):
