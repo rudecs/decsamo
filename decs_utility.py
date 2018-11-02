@@ -29,7 +29,7 @@ from ansible.module_utils.basic import AnsibleModule
 #
 # TODO: the following functionality to be implemented
 # 1) vm_ext_network - direct IP allocation to VM - requires user accessible API (not cloud broker level)
-# 2) vdc_delete - need decision if we allow force delete (any exising VMs to be deleted)
+# 2) vdc_delete - need decision if we allow force delete (any existing VMs to be deleted)
 # 3) vdc_portforwards (?) - do we need to manage it separate from VMs?
 # 4) workflow callbacks
 # 5) run phase states
@@ -952,7 +952,6 @@ class DECSController(object):
         @return: dictionary with image specs. If no image found by the specified name, it returns emtpy dictionary
         and sets self.result['failed']=True.
         """
-        ret_image_facts = dict()
         api_params = dict(cloudspaceId=arg_vdc_id)
 
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/images/list", api_params)
@@ -1049,8 +1048,8 @@ class DECSController(object):
         if self.amodule.check_mode:
             self.result['failed'] = False
             self.result['changed'] = False
-            self.result['msg'] = ("vdc_portforwards() in check mode: port forwards configuration for VDC name '{}' "
-                                  "was requested.").format(arg_vdc_name)
+            # self.result['msg'] = ("vdc_portforwards() in check mode: port forwards configuration for VDC name '{}' "
+            #                      "was requested.").format(arg_vdc_name)
             return
 
         return
@@ -1090,7 +1089,7 @@ class DECSController(object):
         # API /restmachine/cloudapi/cloudspaces/create returns ID of the newly created VDC on success
         self.result['failed'] = False
         self.result['changed'] = True
-        ret_vdc_id = int(api_resp.content)
+        ret_vdc_id = int(api_resp.content.decode('utf8'))
         return ret_vdc_id
 
     def tenant_find(self, arg_tenant_name):
@@ -1104,7 +1103,7 @@ class DECSController(object):
 
         if arg_tenant_name == "":
             self.result['failed'] = True
-            self.result['msg'] = "Cannot find tenant by empty tenant name"
+            self.result['msg'] = "Cannot find tenant if tenant name is empty."
             self.amodule.fail_json(**self.result)
 
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/accounts/list", None)
