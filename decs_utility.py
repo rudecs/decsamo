@@ -6,6 +6,18 @@
 # Author: Sergey Shubin (sergey.shubin@digitalenergy.online)
 #
 
+"""
+This is the library of utility functions and classes for managing DECS cloud platform.
+
+These classes are made aware of Ansible module architecture and designed to be called from the main code of an Ansible
+module to fulfill cloud resource management tasks.
+
+Methods defined in this file should NOT implement complex logic like building execution plan for an
+upper level Ansible module. However, they do implement necessary sanity checks and may abort upper level module
+execution if some fatal error occurs. Being Ansible aware, they usually do so by calling AnsibleModule.fail_json(...)
+method with properly configured arguments.
+"""
+
 import copy
 import json
 import jwt
@@ -14,21 +26,9 @@ import requests
 
 from ansible.module_utils.basic import AnsibleModule
 
-"""
-This is the library of utility functions and classes for managing DECS cloud platform.
-
-These classes are made aware of Ansible module architecture and designed to be called from the main code of an Ansible 
-module to fulfill cloud reource management tasks.
-
-Methods defined in this file should NOT implement complex logic like building execution plan for an
-upper level Ansible module. However, they do implement necessary sanity checks and may abort upper level module 
-execution if some fatal error occurs. Being Ansible aware, they usually do so by calling AnsibleModule.fail_json(...)
-method with properly configured arguments.
-"""
-
-
 #
 # TODO: the following functionality to be implemented
+# 0) test legacy authenticator mode
 # 1) vm_ext_network - direct IP allocation to VM
 # 2) vdc_delete - need decision if we allow force delete (any exising VMs to be deleted)
 # 3) vdc_portforwards (?) - do we need to manage it separate from VMs?
@@ -36,8 +36,8 @@ method with properly configured arguments.
 # 5) run phase states
 # 6) vm_tags - set/manage VM tags
 # 7) vm_attributes - change VM attributes (name, annotation) after VM creation - do we need this in Ansible?
-# 8) verify that result['changed'] value is set correctly
-# 9) pylint and code style review.
+# 8) verify that result['changed'] value is set correctly for all execution plans
+# 9) test vm_restore() method and execution plans that involve vm_restore()
 #
 
 class DECSController():
@@ -67,12 +67,12 @@ class DECSController():
 
         self.amodule = arg_amodule  # AnsibleModule class instance
 
-        # Note that 'changed' is by default set to 'False'. If you plan to manage value of 'changed' key outside ot
-        # DECSController() class, make sure you only update to 'True' when you really change the state of the object
-        # being managed.
-        # The rare case when you will set it to False will usually be either module running in "check mode" or
+        # Note that the value for 'changed' key is by default set to 'False'. If you plan to manage value of 'changed'
+        # key outside of DECSController() class, make sure you only update to 'True' when you really change the state
+        # of the object being managed.
+        # The rare cases to reset it to False again will usually involve either module running in "check mode" or
         # when you are about to call exit_json() or fail_json()
-        self.result = {'failed': False, 'changed': False}
+        self.result = {'failed': False, 'changed': False, 'waypoints': "Init"}
 
         self.authenticator = arg_authenticator.lower()
         self.controller_url = arg_controller_url
@@ -91,10 +91,11 @@ class DECSController():
         if arg_workflow_callback != "":
             self.workflow_callback_present = True
 
-        # The following will be initialized to the name of the user in DECS controller, that corresponds to
-        # the credentials supplied as authentication information parameters
+        # The following will be initialized to the name of the user in DECS controller, who corresponds to
+        # the credentials supplied as authentication information parameters.
         self.decs_username = ''
 
+        # self.run_phase may eventually be deprecated in favor of self.results['waypoints']
         self.run_phase = "Run phase: Initializing DECSController instance."
 
         if self.authenticator == "jwt":
@@ -163,7 +164,7 @@ class DECSController():
 
         @param arg_name: string that defines the name of the module parameter (aka argument) to check.
         @param abort: boolean flag that tells if module should abort its execution on failure to locate the
-        specified argyument.
+        specified argument.
 
         @return: True if argument is found, False otherwise (in abort=False mode).
         """
@@ -180,10 +181,10 @@ class DECSController():
 
     def obtain_oauth2_jwt(self):
         """Obtain JWT from the Oauth2 provider using application ID and application secret provided , as specified at
-         class instance init,.
+         class instance init method.
 
         If method fails to obtain JWT it will abort the execution of the script by calling AnsibleModule.fail_json()
-        method
+        method.
 
         @return: JWT as string.
         """
@@ -193,8 +194,7 @@ class DECSController():
                         client_id=self.app_id,
                         client_secret=self.app_secret,
                         response_type="id_token",
-                        validity=3600,
-                        )
+                        validity=3600,)
         # TODO: Need standard code snippet to handle server timeouts gracefully
         # Consider a few retries before giving up or use requests.Session & requests.HTTPAdapter
         # see https://stackoverflow.com/questions/15431044/can-i-set-max-retries-for-requests-request
@@ -216,9 +216,10 @@ class DECSController():
         if token_get_resp.status_code != 200:
             self.result['failed'] = True
             self.result['msg'] = ("Failed to obtain JWT access token from oauth2_url '{}' for app_id '{}': "
-                                  "HTTP status code {}, reason '{}'").format(
-                token_get_url, self.amodule.params['app_id'],
-                token_get_resp.status_code, token_get_resp.reason)
+                                  "HTTP status code {}, reason '{}'").format(token_get_url,
+                                                                             self.amodule.params['app_id'],
+                                                                             token_get_resp.status_code,
+                                                                             token_get_resp.reason)
             self.amodule.fail_json(**self.result)
 
         # Common return values: https://docs.ansible.com/ansible/2.3/common_return_values.html
@@ -239,7 +240,8 @@ class DECSController():
 
         if self.authenticator not in ('oauth2', 'jwt'):
             # sanity check - JWT is relevant in oauth2 or jwt authentication modes only
-            self.result['msg'] = "Cannot validate JWT for incompatible authentication mode '{}'".format(self.authenticator)
+            self.result['msg'] = "Cannot validate JWT for incompatible authentication mode '{}'".format(
+                self.authenticator)
             self.amodule.fail_json(**self.result)
             # The above call to fail_json will abort the script, so below return statement will never be executed
             return False
@@ -258,8 +260,7 @@ class DECSController():
             return False
 
         req_url = self.controller_url + "/restmachine/cloudapi/accounts/list"
-        req_header = dict(Authorization="bearer {}".format(arg_jwt),
-                          )
+        req_header = dict(Authorization="bearer {}".format(arg_jwt),)
 
         try:
             api_resp = requests.post(req_url, headers=req_header)
@@ -277,9 +278,9 @@ class DECSController():
         if api_resp.status_code != 200:
             self.result['failed'] = True
             self.result['msg'] = ("Failed to validate JWT access token for DECS controller URL '{}': "
-                                  "HTTP status code {}, reason '{}', header '{}'").format(
-                api_resp.url,
-                api_resp.status_code, api_resp.reason, req_header)
+                                  "HTTP status code {}, reason '{}', header '{}'").format(api_resp.url,
+                                                                                          api_resp.status_code,
+                                                                                          api_resp.reason, req_header)
             self.amodule.fail_json(**self.result)
             return False
 
@@ -290,7 +291,7 @@ class DECSController():
         """Validate legacy user by obtaining a session key, which will be used for authenticating subsequent API calls
         to DECS controller.
         If successful, the session key is stored in self.session_key and True is returned. If unsuccessful for any
-        reason, the method will exit.
+        reason, the method will abort.
 
         @return: True on successful validation of the legacy user.
         """
@@ -304,8 +305,7 @@ class DECSController():
 
         req_url = self.controller_url + "/restmachine/cloudapi/users/authenticate"
         req_data = dict(username=self.user,
-                        password=self.password,
-                        )
+                        password=self.password,)
 
         try:
             api_resp = requests.post(req_url, data=req_data)
@@ -323,9 +323,9 @@ class DECSController():
         if api_resp.status_code != 200:
             self.result['failed'] = True
             self.result['msg'] = ("Failed to validate legacy user access to DECS controller URL '{}': "
-                                  "HTTP status code {}, reason '{}'" ).format(req_url,
-                                                                              api_resp.status_code,
-                                                                              api_resp.reason)
+                                  "HTTP status code {}, reason '{}'").format(req_url,
+                                                                             api_resp.status_code,
+                                                                             api_resp.reason)
             self.amodule.fail_json(**self.result)
             return False
 
@@ -411,8 +411,7 @@ class DECSController():
         ret_vm_dict = dict()
         ret_vdc_id = 0
 
-        api_params = dict(machineId=arg_vm_id,
-                          )
+        api_params = dict(machineId=arg_vm_id,)
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/get", api_params)
         if api_resp.status_code == 200:
             ret_vm_id = arg_vm_id
@@ -426,9 +425,11 @@ class DECSController():
 
         @param arg_vm_id: an integer VM ID to be deleted
         @param arg_permanently: a bool that tells if deletion should be permanent. If False, the VM will be
-        marked as deleted and placed into a trash bin for predefined period of time (usually, a few days). Until
+        marked as deleted and placed into a "trash bin" for predefined period of time (usually, a few days). Until
         this period passes the VM can be restored by calling 'restore' method.
         """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_delete")
 
         if self.amodule.check_mode:
             self.result['failed'] = False
@@ -437,8 +438,7 @@ class DECSController():
             return
 
         api_params = dict(machineId=arg_vm_id,
-                          permanently=arg_permanently,
-                          )
+                          permanently=arg_permanently,)
         self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/delete", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
@@ -461,13 +461,12 @@ class DECSController():
         @param arg_vdc_name: name of the VDC to locate VM in. This parameter is used when locating VM by name and
         ignored otherwise. It is also ignored if arg_vdc_id is non-zero.
 
-        @return: ret_vm_id - ID of the VM on success (if the VM is found), 0 otherwise
         @return: ret_vm_facts - dictionary with VM details on success, empty dictionary otherwise
         """
 
-        ret_vm_id, ret_vm_facts, _ = self.vm_find(arg_vm_id, arg_vm_name,
-                                                  arg_vdc_id, arg_vdc_name,
-                                                  arg_check_state=False)
+        _, ret_vm_facts, _ = self.vm_find(arg_vm_id, arg_vm_name,
+                                          arg_vdc_id, arg_vdc_name,
+                                          arg_check_state=False)
 
         return ret_vm_facts
 
@@ -519,7 +518,7 @@ class DECSController():
 
             ret_vdc_id, _ = self.vdc_find(arg_vdc_id, arg_vdc_name)
             if ret_vdc_id:
-                # if non zero arg_vdc_id is specified, try to find the VM in the corresponding VDC
+                # if we have non zero arg_vdc_id at this point, try to find the VM in the corresponding VDC
                 api_params['cloudspaceId'] = ret_vdc_id
                 api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/list", api_params)
                 if api_resp.status_code == 200:
@@ -536,7 +535,7 @@ class DECSController():
         return ret_vm_id, ret_vm_dict, ret_vdc_id
 
     def vm_portforwards(self, arg_vm_dict, arg_pfw_specs):
-        """Manage VM port forwarding rules in a smart way. This method takes desried port forwarding rules as
+        """Manage VM port forwarding rules in a smart way. This method takes desired port forwarding rules as
         an argument and compares it with the existing port forwarding rules
 
         @param arg_vm_dict: dictionary with VM facts. It identifies the VM for which network configuration is
@@ -550,10 +549,12 @@ class DECSController():
         # 1) obtain current port forwarding rules for the target VM
         # 2) create a delta list of port forwards (rules to add and rules to remove)
         #   - full match between existing & requested = ignore, no update of pfw_delta
-        #   - existing not present in requested => copy to pfw_delta and mark as 'delete'
-        #   - requested not present in the existing => copy to pfw_delta and mark as 'create'
-        # 3) provision delta list (remove first, add next)
+        #   - existing rule not present in requested list => copy to pfw_delta and mark as 'delete'
+        #   - requested rule not present in the existing list => copy to pfw_delta and mark as 'create'
+        # 3) provision delta list (first delete rules marked for deletion, next add rules mark for creation)
         #
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_portforwards")
 
         if self.amodule.check_mode:
             self.result['failed'] = False
@@ -570,7 +571,6 @@ class DECSController():
         if not len(arg_pfw_specs) and not len(existing_pfw_list):
             # Desired & existing port forwarding rules both empty - exit
             self.result['failed'] = False
-            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = ("vm_portforwards(): new and existing port forwarding lists both are empty - "
                                   "nothing to do. No change applied to VM ID {}.").format(arg_vm_dict['id'])
             return
@@ -625,12 +625,9 @@ class DECSController():
                                  action='delete')
                 pfw_delta_list.append(pfw_delta)
 
-        self.result['pfw_debug_out'] = "{}".format(pfw_delta_list)
-
         if not len(pfw_delta_list):
             # nothing to do
             self.result['failed'] = False
-            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = ("vm_portforwards() no difference between current and requested port "
                                   "forwarding rules found. No change applied to VM ID {}.").format(arg_vm_dict['id'])
             return
@@ -680,6 +677,8 @@ class DECSController():
 
         NOP_STATES_FOR_POWER_CHANGE = ["MIGRATING", "DELETED", "DESTROYING", "DESTROYED", "ERROR"]
 
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_powerstate")
+
         if self.amodule.check_mode:
             self.result['failed'] = False
             self.result['changed'] = False
@@ -689,7 +688,6 @@ class DECSController():
 
         if arg_vm_dict['status'] in NOP_STATES_FOR_POWER_CHANGE:
             self.result['failed'] = False
-            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = ("vm_powerstate(): no power state change possible for VM ID {} "
                                   "in current state '{}'.").format(arg_vm_dict['id'], arg_vm_dict['status'])
             return
@@ -706,7 +704,7 @@ class DECSController():
             elif arg_target_state == 'restarted':
                 powerstate_api = "/restmachine/cloudapi/machines/reboot"
         elif arg_vm_dict['status'] == "PAUSED" and arg_target_state in ('poweredon', 'restarted'):
-                powerstate_api = "/restmachine/cloudapi/machines/resume"
+            powerstate_api = "/restmachine/cloudapi/machines/resume"
         elif arg_vm_dict['status'] == "HALTED" and arg_target_state in ('poweredon', 'restarted'):
             powerstate_api = "/restmachine/cloudapi/machines/start"
         else:
@@ -720,7 +718,6 @@ class DECSController():
             self.result['changed'] = True
         else:
             self.result['failed'] = False
-            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = ("vm_powerstate(): no power state change required for VM ID {} its from current "
                                   "state '{}' to desired state '{}'.").format(arg_vm_dict['id'],
                                                                               arg_vm_dict['status'],
@@ -731,8 +728,7 @@ class DECSController():
                      arg_cpu, arg_ram,
                      arg_boot_disk, arg_image_id,
                      arg_data_disks=None,
-                     arg_annotation=""
-                     ):
+                     arg_annotation=""):
         """Manage VM provisioning.
         To remove VM use vm_remove method.
         To resize VM use vm_size, to manage VM power state use vm_powerstate method.
@@ -745,6 +741,8 @@ class DECSController():
         # Currently type attribute of boot & data disk specifications is ignored until new storage provider types
         # are implemented into the cloud platform.
         #
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_provision")
 
         if self.amodule.check_mode:
             self.result['failed'] = False
@@ -766,8 +764,7 @@ class DECSController():
                           vcpus=arg_cpu, memory=arg_ram,
                           imageId=arg_image_id,
                           disksize=arg_boot_disk['size'],
-                          datadisks=data_disk_sizes
-                          )
+                          datadisks=data_disk_sizes,)
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/create", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
@@ -811,6 +808,8 @@ class DECSController():
         @return: Dictionary of remaining resources estimation after the specified VM would have been deployed.
         """
 
+        # self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_resource_check")
+
         #
         # TODO - This method is under construction
         #
@@ -823,6 +822,8 @@ class DECSController():
         @param arg_vm_id: integer value that defines the ID of a VM to be restored.
         """
 
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_restore")
+
         if self.amodule.check_mode:
             self.result['failed'] = False
             self.result['changed'] = False
@@ -830,8 +831,7 @@ class DECSController():
             return
 
         api_params = dict(machineId=arg_vm_id,
-                          reason="Restored on user request by Ansible DECS module.",
-                          )
+                          reason="Restored on user request by Ansible DECS module.",)
         self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/restore", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
@@ -856,13 +856,14 @@ class DECSController():
 
         INVALID_STATES_FOR_HOT_DOWNSIZE = ["RUNNING", "MIGRATING", "DELETED"]
 
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_size")
+
         # We need to handle a situation when either of 'cpu' or 'ram' parameter was not supplied. This is acceptable
         # when we manage state of the VM or request change to only one parameter - cpu or ram.
         # In such a case take the "missing" value from the current configuration of the VM.
         if not arg_cpu and not arg_ram:
             # if both are 0 or Null - return immediately, as user did not mean to manage size
             self.result['failed'] = False
-            # self.result['changed'] = self.result['changed'] or False
             return
 
         if not arg_cpu:
@@ -886,7 +887,6 @@ class DECSController():
         if arg_vm_dict['vcpus'] == arg_cpu and arg_vm_dict['memory'] == arg_ram:
             # no need to call API in this case, as requested size is not different from the current one
             self.result['failed'] = False
-            # self.result['changed'] = self.result['changed'] or False
             return
 
         if ((arg_vm_dict['vcpus'] > arg_cpu or arg_vm_dict['memory'] > arg_ram) and
@@ -899,18 +899,16 @@ class DECSController():
                 wait_for_state_change = wait_for_state_change - 1
             if not wait_for_state_change:
                 self.result['failed'] = True
-                # self.result['changed'] = self.result['changed'] or False
                 self.result['msg'] = ("vm_size() downsize of VM ID {} from CPU:RAM {}:{} to {}:{} was requested, "
-                                      "but VM is in the state '{}' incompatible with down size operation").format(
-                    arg_vm_dict['id'],
-                    arg_vm_dict['vcpus'], arg_vm_dict['memory'],
-                    arg_cpu, arg_ram, arg_vm_dict['status'])
+                                      "but VM is in the state '{}' incompatible with down size operation").\
+                    format(arg_vm_dict['id'],
+                           arg_vm_dict['vcpus'], arg_vm_dict['memory'],
+                           arg_cpu, arg_ram, arg_vm_dict['status'])
                 return
 
         api_resize_params = dict(machineId=arg_vm_dict['id'],
                                  memory=arg_ram,
-                                 vcpus=arg_cpu,
-                                 )
+                                 vcpus=arg_cpu,)
         self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/resize", api_resize_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
@@ -950,6 +948,8 @@ class DECSController():
         this period passes the VDC can be restored by calling the corresponding 'restore' method.
         """
 
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_delete")
+
         if self.amodule.check_mode:
             self.result['failed'] = False
             self.result['changed'] = False
@@ -960,8 +960,7 @@ class DECSController():
         # TODO: need decision if deleting a VDC with VMs in it is allowed (aka force=True)
 
         api_params = dict(cloudspaceId=arg_vdc_id,
-                          permanently=arg_permanently,
-                          )
+                          permanently=arg_permanently,)
         self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/delete", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
@@ -987,7 +986,6 @@ class DECSController():
                 ret_vdc_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
             else:
                 self.result['failed'] = True
-                # self.result['changed'] = self.result['changed'] or False
                 self.result['msg'] = ("vdc_find(): cannot locate VDC with VDC ID {}. HTTP code {}, "
                                       "response {}.").format(arg_vdc_id, api_resp.status_code, api_resp.reason)
                 self.amodule.fail_json(**self.result)
@@ -1003,19 +1001,19 @@ class DECSController():
                         if not arg_check_state or vdc_record['status'] not in VDC_INVALID_STATES:
                             ret_vdc_id = vdc_record['id']
                             ret_vdc_dict = copy.deepcopy(vdc_record)
-                            ret_vdc_ip = ret_vdc_dict['externalnetworkip']
+                            # ret_vdc_ip = ret_vdc_dict['externalnetworkip']
         else:
             # Both arg_vdc_id and arg_vdc_name are empty - there is no way to locate VDC in this case
             self.result['failed'] = True
-            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = "vdc_find(): cannot locate VDC when VDC ID is zero and VDC name is empty string."
             self.amodule.fail_json(**self.result)
 
         return ret_vdc_id, ret_vdc_dict
 
     def vdc_portforwards(self):
+        """Manage port forwarding rules at the VDC level"""
         #
-        # TODO - not implemented yet
+        # TODO - not implemented yet - need use case for this method to decide on implementation
         #
         return
 
@@ -1034,6 +1032,8 @@ class DECSController():
         @return: integer ID of the newly created VDC.
         """
 
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_provision")
+
         if self.amodule.check_mode:
             self.result['failed'] = False
             self.result['changed'] = False
@@ -1046,8 +1046,7 @@ class DECSController():
                           name=arg_vdc_name,
                           access=arg_username,
                           maxMemoryCapacity=-1, maxVDiskCapcity=-1,
-                          maxCPUCapacity=-1, maxNumPublicIP=-1,
-                          )
+                          maxCPUCapacity=-1, maxNumPublicIP=-1,)
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/create", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         # API /restmachine/cloudapi/cloudspaces/create returns ID of the newly created VDC on success
@@ -1067,7 +1066,6 @@ class DECSController():
 
         if arg_tenant_name == "":
             self.result['failed'] = True
-            # self.result['changed'] = self.result['changed'] or False
             self.result['msg'] = "Cannot find tenant by empty tenant name"
             self.amodule.fail_json(**self.result)
 
@@ -1084,13 +1082,14 @@ class DECSController():
         return ret_tenant_id, ret_tenant_dict
 
     def workflow_cb_set(self, arg_workflow_callback, arg_workflow_context=None):
+        """Set workflow callback and workflow context value"""
         self.workflow_callback = arg_workflow_callback
         if arg_workflow_callback != "":
             self.workflow_callback_present = True
         else:
             self.workflow_callback_present = False
 
-        if arg_workflow_context:
+        if arg_workflow_context != "":
             self.workflow_context = arg_workflow_context
         else:
             self.workflow_context = ""
@@ -1098,6 +1097,7 @@ class DECSController():
         return
 
     def workflow_cb_call(self):
+        """Invoke workflow callback"""
         #
         # TODO: under construction
         #
@@ -1106,5 +1106,6 @@ class DECSController():
         return
 
     def run_phase_set(self, arg_phase_name):
+        """Set run phase name for module run progress reporting"""
         self.run_phase = arg_phase_name
         return

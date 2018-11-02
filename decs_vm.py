@@ -322,8 +322,7 @@ def decs_vm_parameters():
                         fallback=(env_fallback, ['DECS_APP_SECRET'])),
         authenticator=dict(type='str',
                            required=True,
-                           choices=['legacy', 'oauth2', 'jwt']
-                           ),
+                           choices=['legacy', 'oauth2', 'jwt']),
         boot_disk=dict(type='dict', required=False),
         # boot_disk_model=dict(type='str', default='ovs', required=False, choices=['ovs', 'iscsi']),
         # boot_disk_pool=dict(type='str', default='', required=False),
@@ -534,8 +533,7 @@ def main():
                                            arg_boot_disk=amodule.params['boot_disk'],
                                            arg_image_id=osimage_data['id'],
                                            arg_data_disks=amodule.params['data_disks'],
-                                           arg_annotation=amodule.params['annotation']
-                                           )
+                                           arg_annotation=amodule.params['annotation'])
                 # TODO - configure network for the new VM if corresponding parameters are specified
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])

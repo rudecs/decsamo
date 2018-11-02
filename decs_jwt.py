@@ -72,8 +72,7 @@ def main():
     module_parameters = decs_jwt_parameters()
 
     amodule = AnsibleModule(argument_spec=module_parameters,
-                            supports_check_mode=True,
-                            )
+                            supports_check_mode=True,)
 
     result = {'failed': False, 'changed': False}
 
@@ -82,8 +81,7 @@ def main():
                     client_id=amodule.params['app_id'],
                     client_secret=amodule.params['app_secret'],
                     response_type="id_token",
-                    validity=1200,
-                    )
+                    validity=1200,)
     # TODO: Need standard code snippet to handle server timeouts gracefully
     # Consider a few retries before giving up or use requests.Session & requests.HTTPAdapter
     # see https://stackoverflow.com/questions/15431044/can-i-set-max-retries-for-requests-request
