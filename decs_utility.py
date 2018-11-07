@@ -403,28 +403,6 @@ class DECSController(object):
         self.amodule.fail_json(**self.result)
         return None
 
-    def _vm_get_by_id(self, arg_vm_id):
-        """Helper function that locates VM by ID and returns VM facts.
-
-        @param arg_vm_id: ID of the VM to find and return facts for.
-
-        @return: VM ID, dictionary of VM facts and VDC ID where this VM is located. Note that if it fails
-        to find the VM for the specified ID, it may retunrn 0 for ID and empty dictionary for the facts. So
-        it is suggested to check the return values accordingly.
-        """
-        ret_vm_id = 0
-        ret_vm_dict = dict()
-        ret_vdc_id = 0
-
-        api_params = dict(machineId=arg_vm_id,)
-        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/get", api_params)
-        if api_resp.status_code == 200:
-            ret_vm_id = arg_vm_id
-            ret_vm_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
-            ret_vdc_id = ret_vm_dict['cloudspaceid']
-
-        return ret_vm_id, ret_vm_dict, ret_vdc_id
-
     def vm_delete(self, arg_vm_id, arg_permanently=False):
         """Delete a VM identified by VM ID. It is assumed that the VM with the specified ID exists.
 
@@ -464,12 +442,18 @@ class DECSController(object):
         # /cloudapi/externalnetwork/list
         # accountId - required, integer
 
+        # NEW in : /cloudapi/machines/listExternalNetworks
+        # machineId - required
+
         # /cloudapi/machines/attachExternalNetwork
         # machineId - required, integer
+        # NEW in : externalNetworkId - optional, integer
+        #
         # Returns anything besides HTTP response?
 
         # /cloudapi/machines/detachExternalNetwork
         # machineId - required, integer
+        # NEW in in :
 
         return
 
@@ -497,6 +481,32 @@ class DECSController(object):
                                           arg_check_state=False)
 
         return ret_vm_facts
+
+    def _vm_get_by_id(self, arg_vm_id):
+        """Helper function that locates VM by ID and returns VM facts.
+
+        @param arg_vm_id: ID of the VM to find and return facts for.
+
+        @return: VM ID, dictionary of VM facts and VDC ID where this VM is located. Note that if it fails
+        to find the VM for the specified ID, it may return 0 for ID and empty dictionary for the facts. So
+        it is suggested to check the return values accordingly.
+        """
+        ret_vm_id = 0
+        ret_vm_dict = dict()
+        ret_vdc_id = 0
+
+        api_params = dict(machineId=arg_vm_id,)
+        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/get", api_params)
+        if api_resp.status_code == 200:
+            ret_vm_id = arg_vm_id
+            ret_vm_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
+            ret_vdc_id = ret_vm_dict['cloudspaceid']
+        else:
+            self.result['warning'] = ("vm_get_by_id(): failed to get VM by ID {}. HTTP code {}, "
+                                      "response {}.").format(arg_vm_id, api_resp.status_code, api_resp.reason)
+
+        return ret_vm_id, ret_vm_dict, ret_vdc_id
+
 
     def vm_find(self, arg_vm_id=0,
                 arg_vm_name=None, arg_vdc_id=0, arg_vdc_name=None,
@@ -535,6 +545,10 @@ class DECSController(object):
         if arg_vm_id:
             # locate VM by ID - if there is no VM with such ID, the below method will abort
             ret_vm_id, ret_vm_dict, ret_vdc_id = self._vm_get_by_id(arg_vm_id)
+            if not ret_vm_id:
+                self.result['failed'] = True
+                self.result['msg'] = "vm_find(): cannot locate VM with ID {}.".format(arg_vm_id)
+                self.amodule.fail_json(**self.result)
         else:
             # If no arg_vm_id specified, then we have to locate the target VDC.
             # To locate VDC we need either non zero VDC ID or non empty VDC name - do corresponding sanity check
@@ -984,7 +998,8 @@ class DECSController(object):
             return
 
         #
-        # TODO: need decision if deleting a VDC with VMs in it is allowed (aka force=True)
+        # TODO: need decision if deleting a VDC with VMs in it is allowed (aka force=True) and implement accordingly.
+        #
 
         api_params = dict(cloudspaceId=arg_vdc_id,
                           permanently=arg_permanently,)
@@ -995,26 +1010,62 @@ class DECSController(object):
 
         return
 
+    def _vdc_get_by_id(self, arg_vdc_id):
+        """Helper function that locates VDC by ID and returns VM facts.
+
+        @param arg_vdc_id: ID of the VDC to find and return facts for.
+
+        @return: VDC ID and a dictionary of VDC facts as provided by cloudspaces/get API call. Note that if it fails
+        to find the VDC for the specified ID, it may return 0 for ID and empty dictionary for the facts. So
+        it is suggested to check the return values accordingly.
+        """
+        ret_vdc_id = 0
+        ret_vdc_dict = dict()
+
+        api_params = dict(cloudspaceId=arg_vdc_id,)
+        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/get", api_params)
+        if api_resp.status_code == 200:
+            ret_vdc_id = arg_vdc_id
+            ret_vdc_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
+        else:
+            self.result['warning'] = ("vdc_get_by_id(): failed to get VDC by ID {}. HTTP code {}, "
+                                      "response {}.").format(arg_vdc_id, api_resp.status_code, api_resp.reason)
+
+        return ret_vdc_id, ret_vdc_dict
+
     def vdc_find(self, arg_vdc_id=0, arg_vdc_name="", arg_check_state=True):
         """Returns non zero VDC ID and a dictionary with VDC details on success, 0 and empty dictionary otherwise.
+        This method does not fail the run if VDC cannot be located by its name (arg_vdc_name), because this could be
+        an indicator of the requested VDC never existed before.
+        However, it does fail the run if VDC cannot be located by arg_vdc_id (if non zero specified) or if API errors
+        occur.
+
+        @param arg_vdc_id: integer ID of the VDC to be found.
+        @param arg_vdc_name: string that defines the name of VDC to be found. This parameter is case sensitive.
+        @param arg_check_state: boolean that tells the method to report VDCs in valid states only.
+
+        @return: VDC ID of the VDC, if present. Zero otherwise.
+        @return: dictionary with VDC facts as provided by .../cloudspaces/get API call if VDC is present. Empty
+        dictionary otherwise.
         """
 
+        # Cloud space can be in one of the following states:
+        # VIRTUAL, DEPLOYING, DESTROYED, DEPLOYED, DESTROYING, MIGRATING, DISABLED, DELETED
+        #
+
         VDC_INVALID_STATES = ["DESTROYED", "DELETED", "DESTROYING"]
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_find")
 
         ret_vdc_id = 0
         api_params = dict()
         ret_vdc_dict = dict()
 
         if arg_vdc_id:
-            api_params['cloudspaceId'] = arg_vdc_id
-            api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/get", api_params)
-            if api_resp.status_code == 200:
-                ret_vdc_id = arg_vdc_id
-                ret_vdc_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
-            else:
+            ret_vdc_id, ret_vdc_dict = self._vdc_get_by_id(arg_vdc_id)
+            if not ret_vdc_id:
                 self.result['failed'] = True
-                self.result['msg'] = ("vdc_find(): cannot locate VDC with VDC ID {}. HTTP code {}, "
-                                      "response {}.").format(arg_vdc_id, api_resp.status_code, api_resp.reason)
+                self.result['msg'] = "vdc_find(): cannot locate VDC with VDC ID {}.".format(arg_vdc_id)
                 self.amodule.fail_json(**self.result)
         elif arg_vdc_name != "":
             # try to locate VDC by name - start with listing all VDCs available to the current user
@@ -1026,9 +1077,9 @@ class DECSController(object):
                 for vdc_record in vdcs_list:
                     if vdc_record['name'] == arg_vdc_name:
                         if not arg_check_state or vdc_record['status'] not in VDC_INVALID_STATES:
-                            ret_vdc_id = vdc_record['id']
-                            ret_vdc_dict = copy.deepcopy(vdc_record)
-                            # ret_vdc_ip = ret_vdc_dict['externalnetworkip']
+                            ret_vdc_id, ret_vdc_dict = self._vdc_get_by_id(vdc_record['id'])
+            # Note: we do not fail the run if VDC cannot be located by its name, because it could be a new VDC
+            # that never existed before. In this case ret_vdc_id=0 and empty ret_vdc_dict will be returned.
         else:
             # Both arg_vdc_id and arg_vdc_name are empty - there is no way to locate VDC in this case
             self.result['failed'] = True
@@ -1040,7 +1091,7 @@ class DECSController(object):
     def vdc_portforwards(self):
         """Manage port forwarding rules at the VDC level"""
         #
-        # TODO - not implemented yet - need use case for this method to decide on implementation
+        # TODO - not implemented yet - need use case for this method to decide if it should be implemented at all
         #
 
         self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_portforwards")
@@ -1054,7 +1105,7 @@ class DECSController(object):
 
         return
 
-    def vdc_provision(self, arg_tenant_id, arg_datacenter, arg_vdc_name, arg_username):
+    def vdc_provision(self, arg_tenant_id, arg_datacenter, arg_vdc_name, arg_username, arg_quota={}):
         """Provision new VDC according to the specified arguments.
         If critical error occurs the embedded call to API function will abort further execution of the script
         and relay error to Ansible.
@@ -1062,9 +1113,11 @@ class DECSController(object):
 
         @param arg_tenant_id: the non-zero ID of the tenant under which the new VDC will be created.
         @param arg_datacenter: the name of datacanter under the DECS controller where VDC will be created.
-        @param arg_vm_name: the name of the VDC to be created.
+        @param arg_vdc_name: the name of the VDC to be created.
         @param arg_username: the name of the user under DECS controller, who will have primary access to the newly
         created VDC.
+        @param arg_quota: dictionary that defines quotas to set on the VDC to be created. Valid keys are: cpu, ram,
+        disk and ext_ips.
 
         @return: integer ID of the newly created VDC.
         """
@@ -1082,8 +1135,18 @@ class DECSController(object):
                           location=arg_datacenter,
                           name=arg_vdc_name,
                           access=arg_username,
-                          maxMemoryCapacity=-1, maxVDiskCapcity=-1,
+                          maxMemoryCapacity=-1, maxVDiskCapacity=-1,
                           maxCPUCapacity=-1, maxNumPublicIP=-1,)
+        if arg_quota:
+            if 'ram' in arg_quota:
+                api_params['maxMemoryCapacity'] = arg_quota['ram']
+            if 'disk' in arg_quota:
+                api_params['maxVDiskCapacity'] = arg_quota['disk']
+            if 'cpu' in arg_quota:
+                api_params['maxCPUCapacity'] = arg_quota['cpu']
+            if 'ext_ips' in arg_quota:
+                api_params['maxNumPublicIP'] = arg_quota['ext_ips']
+
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/create", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         # API /restmachine/cloudapi/cloudspaces/create returns ID of the newly created VDC on success
@@ -1091,6 +1154,148 @@ class DECSController(object):
         self.result['changed'] = True
         ret_vdc_id = int(api_resp.content.decode('utf8'))
         return ret_vdc_id
+
+    def vdc_quotas(self, arg_vdc_dict, arg_quotas):
+        """Manage quotas for an existing VDC
+
+        @param arg_vdc_dict: dictionary with VDC facts as returned by vdc_find(...) method or .../cloudspaces/get API
+        call to obtain the data.
+        @param arg_quotas: dictionary with quota settings. Valid keys are cpu, ram, disk and ext_ips. Not all keys must
+        be present. Current quota settings for the missing keys will be retained on the VDC.
+        """
+
+        #
+        # TODO: what happens if user requests quota downsize, and what is currently deployed turns above the new quota?
+        #
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_quotas")
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = ("vdc_quotas() in check mode: setting quotas on VDC ID {}, VDC name '{}' was "
+                                  "requested.").format(arg_vdc_dict['id'], arg_vdc_dict['name'])
+            return
+
+        # One more inconsistency in API keys:
+        # - when setting resource limits, the keys are in the form 'max{{ RESOURCE_NAME }}Capacity'
+        # - when quering resource limits, the keys are in the form of cloud units (CU_*)
+        query_key_map = dict(cpu='CU_C',
+                             ram='CU_M',
+                             disk='CU_D',
+                             ext_ips='CU_I',)
+        set_key_map = dict(cpu='maxCPUCapacity',
+                           ram='maxMemoryCapacity',
+                           disk='maxVDiskCapacity',
+                           ext_ips='maxNumPublicIP',)
+        api_params = dict(cloudspaceId=arg_vdc_dict['id'],)
+        quota_change_required = False
+
+        for new_limit in ('cpu', 'ram', 'disk', 'ext_ips'):
+            if arg_quotas:
+                if new_limit in arg_quotas:
+                    # If this resource type limit is found in the desired quotas, check if the desired setting is
+                    # different from the current settings of VDC. If it is different, set the new one.
+                    if arg_quotas[new_limit] != arg_vdc_dict['resourceLimits'][query_key_map[new_limit]]:
+                        api_params[set_key_map[new_limit]] = arg_quotas[new_limit];
+                        quota_change_required = True
+                else:
+                    # This resource type limit not found in the desired quotas. It means that no limit for this
+                    # resource type - reset VDC limit for this resource type regardless of the current VDC settings.
+                    api_params[set_key_map[new_limit]] = -1
+                    quota_change_required = True
+            else:
+                # if quotas dictionary is None, it means that no quotas should be set - reset the limits
+                api_params[set_key_map[new_limit]] = -1
+                quota_change_required = True
+
+        if quota_change_required:
+            self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/update", api_params)
+            # On success the above call will return here. On error it will abort execution by calling fail_json.
+            self.result['failed'] = False
+            self.result['changed'] = True
+
+        return
+
+    def vdc_restore(self, arg_vdc_id):
+        """Restores a deleted VDC identified by VDC ID. For restore to succeed the VDC must be in 'DELETED' state.
+
+        @param arg_vdc_id: integer that defines the ID of a VDC to be restored.
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_restore")
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = "vdc_restore() in check mode: restore VDC ID {} was requested.".format(arg_vdc_id)
+            return
+
+        api_params = dict(cloudspaceId=arg_vdc_id,
+                          reason="Restored on user request by Ansible DECS module.",)
+        self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/restore", api_params)
+        # On success the above call will return here. On error it will abort execution by calling fail_json.
+        self.result['failed'] = False
+        self.result['changed'] = True
+        return
+
+    def vdc_vfwstate(self, arg_vdc_dict, arg_desired_state):
+        """Manage state of the Virtual Firewall (aka VFW) associated with the VDC.
+
+        @param arg_vdc_dict: dictionary with the target VDC facts as returned by vdc_find(...) method or
+        .../cloudspaces/get API call to obtain the data.
+        @param arg_desired_state: the desired state of the VFW. Valid states are 'enabled', 'disabled' or 'deploy'.
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_vfwstate")
+
+        NOP_STATES_FOR_VFW_CHANGE = ["MIGRATING", "DELETED", "DESTROYING", "DESTROYED", "DEPLOYING"]
+        VALID_STATES_FOR_VFW_CHANGE = ["enabled", "disabled", "deploy"]
+
+        if arg_vdc_dict['status'] in NOP_STATES_FOR_VFW_CHANGE:
+            self.result['failed'] = False
+            self.result['msg'] = ("vm_vfwstate(): no state change possible for VFW of VDC ID {} "
+                                  "in its current state '{}'.").format(arg_vdc_dict['id'], arg_vdc_dict['status'])
+            return
+
+        if arg_desired_state not in VALID_STATES_FOR_VFW_CHANGE:
+            self.result['failed'] = False
+            self.result['warning'] = ("vm_vfwrstate(): unrecognized desired state '{}' requested "
+                                      "for VDC ID {}. No VFW state change will be done.").format(arg_desired_state,
+                                                                                                 arg_vdc_dict['id'])
+            return
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = ("vdc_vfwstate() in check mode: setting VFW state of VDC ID {}, VDC name '{}' to "
+                                  "'{}' was requested.").format(arg_vdc_dict['id'], arg_vdc_dict['name'],
+                                                                arg_desired_state)
+            return
+
+        vfwstate_api = ""  # this string will also be used as a flag to indicate that API call is necessary
+        api_params = dict(cloudspaceId=arg_vdc_dict['id'],
+                          reason='Changed by decs_vdc module, decs_vfwstate method.')
+
+        if arg_vdc_dict['status'] == "VIRTUAL" and arg_desired_state in ('deploy', 'enabled'):
+            vfwstate_api = "/restmachine/cloudapi/cloudspaces/deploy"
+        elif arg_vdc_dict['status'] == "DEPLOYED" and arg_desired_state == 'disabled':
+            vfwstate_api = "/restmachine/cloudapi/cloudspaces/disable"
+        elif arg_vdc_dict['status'] == "DISABLED" and arg_desired_state in ('deploy', 'enabled'):
+                vfwstate_api = "/restmachine/cloudapi/cloudspaces/enable"
+
+        if vfwstate_api != "":
+            self.decs_api_call(requests.post, vfwstate_api, api_params)
+            # On success the above call will return here. On error it will abort execution by calling fail_json.
+            self.result['failed'] = False
+            self.result['changed'] = True
+        else:
+            self.result['failed'] = False
+            self.result['msg'] = ("vm_vfwrstate(): no state change required for VFW in VDC ID {} from current "
+                                  "state '{}' to desired state '{}'.").format(arg_vdc_dict['id'],
+                                                                              arg_vdc_dict['status'],
+                                                                              arg_desired_state)
+        return
 
     def tenant_find(self, arg_tenant_name):
         """Find cloud tenant specified by the name anr return facts about the tenant. Tenant is required for certain
