@@ -17,7 +17,7 @@ short_description: Obtain access token to be used for authentication to DECS clo
 description:
      - Obtain JWT (Json Web Token) from the specified Oauth2 provider. This JWT can be used in subsequent DECS modules
        invocations to authenticate them to the DECS cloud controller.
-version_added: "1.0"
+version_added: "2.4"
 author: "Sergey Shubin (sergey.shubin@digitalenergy.online)"
 notes:
      - Environment variables can be used to pass parameters to the module

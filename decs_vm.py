@@ -438,6 +438,7 @@ def main():
         elif vm_facts['status'] in ("PAUSED", "HALTED"):
             if amodule.params['state'] == 'absent':
                 decon.vm_delete(arg_vm_id=vm_id, arg_permanently=True)
+                vm_should_exist = False
             elif amodule.params['state'] in ('present', 'paused', 'poweredoff'):
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
@@ -447,8 +448,9 @@ def main():
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
         elif vm_facts['status'] == "DELETED":
             if amodule.params['state'] in ('present', 'poweredon'):
+                # TODO - check if restore API returns VM ID (similarly to VM create API)
                 decon.vm_restore(arg_vm_id=vm_id)
-                # TODO - to manage port forwards and size we need updated vm facts after VM is restored
+                # TODO - do we need updated vm_facts to manage port forwards and size after VM is restored?
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 # decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'absent':
@@ -461,30 +463,33 @@ def main():
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 decon.result['failed'] = True
                 decon.result['changed'] = False
-                decon.result['msg'] = "Invalid target state {} requested for VM ID {} in the current status {}".format(
-                    vm_id, amodule.params['state'], vm_facts['status']
-                )
+                decon.result['msg'] = ("Invalid target state {} requested for VM ID "
+                                       "{} in the current status {}").format(vm_id,
+                                                                             amodule.params['state'],
+                                                                             vm_facts['status'])
         elif vm_facts['status'] == "DESTROYED":
             if amodule.params['state'] in ('present', 'poweredon'):
                 # TODO - need to elaborate on the logic of re-creating a VM that was found in destroyed state
+                # consider moving lines 502-546 to a convenience function
                 # vm_id = decon.vm_provision(...)
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 pass
             elif amodule.params['state'] == 'absent':
                 decon.result['failed'] = False
                 decon.result['changed'] = False
-                decon.result['msg'] = "No state change required for VM ID {} because of its current status {}".format(
-                    vm_id, vm_facts['status']
-                )
+                decon.result['msg'] = ("No state change required for VM ID {} because of its "
+                                       "current status '{}'").format(vm_id, vm_facts['status'])
                 vm_should_exist = False
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 decon.result['failed'] = True
                 decon.result['changed'] = False
-                decon.result['msg'] = "Invalid target state {} requested for VM ID {} in the current status {}".format(
-                    vm_id, amodule.params['state'], vm_facts['status']
-                )
+                decon.result['msg'] = ("Invalid target state '{}' requested for VM ID {} in the "
+                                       "current status '{}'").format(vm_id,
+                                                                     amodule.params['state'],
+                                                                     vm_facts['status'])
     else:
         # Preexisting VM was not found.
+        vm_should_exist = False  # we will change it back to True if VM is created or restored
         # If requested state is 'absent' - exit immediately, as there is nothing to do
         if amodule.params['state'] == 'absent':
             decon.result['failed'] = False
@@ -492,7 +497,6 @@ def main():
             decon.result['msg'] = "Nothing to do as target state 'absent' was requested for non-existent VM {}".format(
                 amodule.params['name']
             )
-            vm_should_exist = False
         elif amodule.params['state'] in ('present', 'poweredon'):
             # Check if all required paremeters for VM creation are initialized or abort the module. At this point
             # the following parameters must be present: cpu, ram, image_name, boot_disk
@@ -519,12 +523,13 @@ def main():
                     else:
                         decon.result['failed'] = True
                         decon.result['msg'] = ("Current user does not have access to the requested tenant "
-                                               "name '{}'.").format(amodule.params['tenant'])
+                                               "name '{}' or non-existent tenant specified.").format(
+                            amodule.params['tenant'])
                 else:
                     # we miss either tenant or datacenter in the parameters - creating VDC is not possible
                     decon.result['failed'] = True
                     decon.result['msg'] = ("Cannot create VDC name '{}', because either datacenter or tenant "
-                                           "parameter is missing.").format(amodule.params['vdc_name'])
+                                           "parameter is missing or emtpy.").format(amodule.params['vdc_name'])
             # find OS image ID that is specified for the new VM
             osimage_data = None
             if not decon.result['failed']:
@@ -540,7 +545,6 @@ def main():
                                            arg_image_id=osimage_data['id'],
                                            arg_data_disks=amodule.params['data_disks'],
                                            arg_annotation=amodule.params['annotation'])
-                # TODO - configure network for the new VM if corresponding parameters are specified
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 # TODO - configure tags for the new VM if corresponding parameters are specified
@@ -559,7 +563,7 @@ def main():
         amodule.fail_json(**decon.result)
     else:
         # prepare VM facts to be returned as part of decon.result and then call exit_json(...)
-        if vm_should_exist:
+        if vm_should_exist and not amodule.check_mode:
             # If we arrive here, there is a good chance that the VM is present - get fresh VM facts from
             # the cloud by VM ID.
             # Otherwise, VM facts from previous call (when the VM was still in existence) will be returned.
