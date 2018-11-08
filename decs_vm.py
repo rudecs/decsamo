@@ -342,7 +342,6 @@ from ansible.module_utils.decs_utility import *
 def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False):
     """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
     be returned to the upstream Ansible engine at the completion of the module run.
-
     @param arg_vm_facts: dictionary with VM facts as returned by API call to .../machines/get
     @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
     @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
@@ -665,9 +664,11 @@ def main():
         vdc_facts = None
         if vm_should_exist:
             if decon.result['changed']:
-                # There were changes - refresh VM and VDC facts.
+                # There were changes to the VM - refresh VM facts.
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
-                _, vdc_facts = decon.vdc_find(arg_vdc_id=vdc_id)
+            # we need to extract VDC facts regardless of 'changed' flag, as it our source of information on
+            # the VDC external IP address
+            _, vdc_facts = decon.vdc_find(arg_vdc_id=vdc_id)
         decon.result['vm_facts'] = decs_vm_package_facts(vm_facts, vdc_facts, amodule.check_mode)
         amodule.exit_json(**decon.result)
 

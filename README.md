@@ -1,7 +1,7 @@
 # decsamo
 Ansible modules for managing DECS cloud resources.
 
-Once you deploy this modules to your local Ansible host (e.g. for Ansible 2.6 on Ubuntu, by placing the module decs_vm.py under /usr/share/ansible/plugins/modules/ and utility library decs_utility.py under your local Ansible lib/ansible/module_utils/ directory), check module documentation and examples by running the following command:
+Once you deploy this modules to your local Ansible host (e.g. for Ansible 2.6 on Ubuntu, by placing the module decs_vm.py under /usr/share/ansible/plugins/modules/ and utility library decs_utility.py under /usr/lib/python2.7/dist-packages/ansible/module_utils/), check module documentation and examples by running the following command:
 
 ansible-doc -t module decs_vm
 
