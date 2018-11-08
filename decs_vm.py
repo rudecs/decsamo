@@ -58,7 +58,8 @@ options:
     boot_disk:
         description:
         - Boot disk specification provided as a dictionary. 
-        - Boot disk cannot be removed from VM. Size change is not supported.
+        - Boot disk cannot be removed from VM.
+        - Size change is not supported by the module. Use DECS API if you need to manage existing disk size.
         - 'This parameter is required for VM creation, valid at VM creation time only and ignored for operations on
            existing VMs.'
         - 'Valid keys are:'
@@ -92,7 +93,7 @@ options:
         description:
         - The list of data disks to attach to the VM. 
         - This parameter is valid at VM creation time only and is ignored for operations on existing VMs.
-        - Data disks resize or removal is not supported.
+        - Data disks resize or removal is not supported by the module. Use DECS API to manage existing data disks.
         - 'Each data disk is specified as a dictionary with the following keys:'
         - ' - I(size) (integer) - size of the data disk in GB.'
         - ' - I(model) (string) - model name of the resource storage provider to use for disk deployment. Valid model 
@@ -101,6 +102,18 @@ options:
               DECS instance setup. If specified pool name is not found, it is expected that the platform will
               provision from the C(default) pool, which must always be present.'
         required: no
+    ext_network:
+        description:
+        - Specify if an external network address should be attached to the VM.
+        - Only one external network address can be attached to each VM (this limitation may be removed in the future).
+        - 'It does not automatically configure virtual NIC to be associated with the attached external network 
+          address at the quest OS level. You need to complete setup at guest OS level by writing a corresponding task.'
+        - 'To get attached IP address you would typically check vm_facts["interfaces"][1]["ipAddress"] - a string
+          formatted like "123.45.67.89/24"'
+        - 'To get the default gateway address for the attached external IP address you would typically check
+          vm_facts["interfaces"][1]["params"] - a string formatted like "gateway:123.45.67.1 externalnetworkid:1"'
+        default: absent
+        choices: [ present, absent ]
     id:
         description:
         - ID of the VM.
@@ -163,28 +176,28 @@ options:
         required: no
     state:
         description:
-        - Specify the requested state of the virtual machine at the exit of the module.
+        - Specify the desired state of the virtual machine at the exit of the module.
         - 'Regardless of I(state), if VM exists and is in one of [MIGRATING, DESTROYING, ERROR] states, do nothing.'
-        - 'If I(state=present):'
+        - 'If desired I(state=present):'
         - ' - VM does not exist, create it according to the specifications.'
         - ' - VM in one of [RUNNING, PAUSED, HALTED] states, attempt resize if necessary, change network if necessary.'
         - ' - VM in DELETED state, restore it.'
         - ' - VM in DESTROYED state, create it according to the specifications.'
-        - 'If I(state=poweredon):'
+        - 'If desired I(state=poweredon):'
         - ' - VM does not exist, create it according to the specifications.'
         - ' - VM in RUNNING state, attempt resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, attempt resize if necessary, change network if necessary, next 
               start the VM.'
         - ' - VM in DELETED state, restore it.'
         - ' - VM in DESTROYED state, create it according to the specifications.'
-        - 'If I(state=absent):'
+        - 'If desired I(state=absent):'
         - ' - VM in one of [RUNNING, PAUSED, HALTED] states, destroy it.'
         - ' - VM in one of [DELETED, DESTROYED] states, do nothing.'
-        - 'If I(state=paused):'
+        - 'If desired I(state=paused):'
         - ' - VM in RUNNING state, pause the VM, resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
         - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
-        - 'If I(state=paused):'
+        - 'If desired I(state=poweredoff):'
         - ' - VM in RUNNING state, stop the VM, resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
         - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
@@ -264,7 +277,7 @@ EXAMPLES = '''
           proto: tcp
       state: present
       tags: "PROJECT:Ansible STATUS:Test"
-      tenant: "GreyseDevelopment"
+      tenant: "Development"
       vdc_name: "ANewVDC"
     delegate_to: localhost
     register: simple_vm
@@ -281,7 +294,7 @@ EXAMPLES = '''
           int_port: 22
           proto: tcp
       state: present
-      tenant: "GreyseDevelopment"
+      tenant: "Development"
       vdc_name: "ANewVDC"
     delegate_to: localhost
     register: simple_vm
@@ -300,16 +313,79 @@ EXAMPLES = '''
 
 RETURN = '''
 vm_facts:
-    description: facts about the virtual machine 
+    description: facts about the virtual machine that may be useful in the playbook
     returned: always
     type: dict
-    sample: None
+    sample:
+      vm_facts:
+        id: 9454
+        name: TestVM
+        state: RUNNING
+        username: testuser
+        password: Yab!tWbyPF
+        int_ip: 192.168.103.253
+        vdc_name: SandboxVDC
+        vdc_id: 2883
+        vdc_ext_ip: 185.193.143.151
+        ext_ip: 185.193.143.106
+        ext_netmask: 24
+        ext_gateway: 185.193.143.1
+        ext_mac: 52:54:00:00:1a:24
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.basic import env_fallback
 
 from ansible.module_utils.decs_utility import *
+
+
+def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None):
+    """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
+    be returned to the upstream Ansible engine at the completion of the module run.
+
+    @param arg_vm_facts: dictionary with VM facts as returned by API call to .../machines/get
+    @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
+    """
+
+    ret_dict = dict()
+
+    ret_dict['id'] = arg_vm_facts['id']
+    ret_dict['name'] = arg_vm_facts['name']
+    ret_dict['state'] = arg_vm_facts['status']
+    ret_dict['username'] = arg_vm_facts['accounts'][0]['login']
+    ret_dict['password'] = arg_vm_facts['accounts'][0]['password']
+
+    ret_dict['vdc_id'] = arg_vm_facts['cloudspaceid']
+    if arg_vdc_facts is not None:
+        ret_dict['vdc_name'] = arg_vdc_facts['name']
+        ret_dict['vdc_ext_ip'] = arg_vdc_facts['externalnetworkip']
+    else:
+        ret_dict['vdc_name'] = ""
+        ret_dict['vdc_ext_ip'] = ""
+
+    ret_dict['int_ip'] = arg_vm_facts['interfaces'][0]['ipAddress']
+
+    ret_dict['ext_ip'] = ""
+    ret_dict['ext_netmask'] = ""
+    ret_dict['ext_gateway'] = ""
+    ret_dict['ext_mac'] = ""
+    # Look up external network in the provided arg_vm_dict - select the 1-st record of type PUBLIC
+    # NOTE that current implementation does not support multiple direct IP addresses assigned to a VM, but this
+    # may change in the future.
+    for item in arg_vm_facts['interfaces']:
+        if item['type'] == "PUBLIC":
+            # 'ipAddress' value comes in the form like "192.168.1.10/24", so for IP address we need to split at "/"
+            # and assign resulting list items accordingly
+            ret_dict['ext_ip'], ret_dict['ext_netmask'] = item['ipAddress'].split("/", 1)
+            # 'params' value has form 'gateway:185.193.143.1 externalnetworkId:2', so we need to split twice:
+            # first by ":" and then by " " to get external gateway address
+            ret_dict['ext_gateway'] = item['params'].split(":")[1].split(" ", 1)[0]
+            # and the MAC address of the direct public interface
+            ret_dict['ext_mac'] = item['macAddress']
+            break
+
+    return ret_dict
+
 
 def decs_vm_parameters():
     """Build and return a dictionary of parameters expected by decs_vm module in a form accepted
@@ -339,6 +415,9 @@ def decs_vm_parameters():
         # create_vdc=dict(type='bool', required=False, default=False),
         datacenter=dict(type='str', required=False, default=''),
         data_disks=dict(type='list', default=[], required=False),
+        ext_network=dict(type='str',
+                         default='absent',
+                         choices=['absent', 'present']),
         # iconf
         id=dict(type='int'),
         image_name=dict(type='str', required=False),
@@ -380,6 +459,7 @@ def decs_vm_parameters():
 #       - change power state: change as required
 #       - change guest OS state: change as required
 # 6) report result to Ansible
+
 
 def main():
     module_parameters = decs_vm_parameters()
@@ -429,11 +509,13 @@ def main():
             elif amodule.params['state'] in ('present', 'poweredon'):
                 # check port forwards / check size / nop
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 # pause or power off the vm, then check port forwards / check size
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'], wait_for_state_change=7)
         elif vm_facts['status'] in ("PAUSED", "HALTED"):
             if amodule.params['state'] == 'absent':
@@ -441,9 +523,11 @@ def main():
                 vm_should_exist = False
             elif amodule.params['state'] in ('present', 'paused', 'poweredoff'):
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'poweredon':
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
         elif vm_facts['status'] == "DELETED":
@@ -452,6 +536,7 @@ def main():
                 decon.vm_restore(arg_vm_id=vm_id)
                 # TODO - do we need updated vm_facts to manage port forwards and size after VM is restored?
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
+                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
                 # decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'absent':
                 decon.result['failed'] = False
@@ -463,16 +548,18 @@ def main():
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 decon.result['failed'] = True
                 decon.result['changed'] = False
-                decon.result['msg'] = ("Invalid target state {} requested for VM ID "
-                                       "{} in the current status {}").format(vm_id,
-                                                                             amodule.params['state'],
-                                                                             vm_facts['status'])
+                decon.result['msg'] = ("Invalid target state '{}' requested for VM ID "
+                                       "{} in the current status '{}'").format(vm_id,
+                                                                               amodule.params['state'],
+                                                                               vm_facts['status'])
         elif vm_facts['status'] == "DESTROYED":
             if amodule.params['state'] in ('present', 'poweredon'):
-                # TODO - need to elaborate on the logic of re-creating a VM that was found in destroyed state
-                # consider moving lines 502-546 to a convenience function
+                # TODO - recreating a VM found by vm_name in DESTROYED state is not implemented yet
+                # TODO - need to elaborate on the logic of re-creating a VM that was found in DESTROYED state
+                # consider moving lines 502-546 to a convenience function and reuse it throughout this module
                 # vm_id = decon.vm_provision(...)
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
+                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
                 pass
             elif amodule.params['state'] == 'absent':
                 decon.result['failed'] = False
@@ -498,7 +585,7 @@ def main():
                 amodule.params['name']
             )
         elif amodule.params['state'] in ('present', 'poweredon'):
-            # Check if all required paremeters for VM creation are initialized or abort the module. At this point
+            # Check if all required parameters for VM creation are initialized or abort the module. At this point
             # the following parameters must be present: cpu, ram, image_name, boot_disk
             decon.check_amodule_argument('cpu')  # each of the following calls will abort if argument is missing
             decon.check_amodule_argument('ram')
@@ -531,22 +618,23 @@ def main():
                     decon.result['msg'] = ("Cannot create VDC name '{}', because either datacenter or tenant "
                                            "parameter is missing or emtpy.").format(amodule.params['vdc_name'])
             # find OS image ID that is specified for the new VM
-            osimage_data = None
+            osimage_facts = None
             if not decon.result['failed']:
                 # no errors in the workflow thus far and we have target VDC ID - proceed with locating the
                 # requested OS image
-                osimage_data = decon.image_find(amodule.params['image_name'], vdc_id)
-            if not decon.result['failed'] and osimage_data:
+                osimage_facts = decon.image_find(amodule.params['image_name'], vdc_id)
+            if not decon.result['failed'] and osimage_facts:
                 # no errors thus far and we have: target VDC ID and requested OS image ID - we are ready to
                 # provision the VM
                 vm_id = decon.vm_provision(arg_vdc_id=vdc_id, arg_vm_name=amodule.params['name'],
                                            arg_cpu=amodule.params['cpu'], arg_ram=amodule.params['ram'],
                                            arg_boot_disk=amodule.params['boot_disk'],
-                                           arg_image_id=osimage_data['id'],
+                                           arg_image_id=osimage_facts['id'],
                                            arg_data_disks=amodule.params['data_disks'],
                                            arg_annotation=amodule.params['annotation'])
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
                 # TODO - configure tags for the new VM if corresponding parameters are specified
                 # if decon.check_amodule_argument('tags', abort=False):
                 #
@@ -563,11 +651,13 @@ def main():
         amodule.fail_json(**decon.result)
     else:
         # prepare VM facts to be returned as part of decon.result and then call exit_json(...)
-        if vm_should_exist and not amodule.check_mode:
-            # If we arrive here, there is a good chance that the VM is present - get fresh VM facts from
-            # the cloud by VM ID.
-            # Otherwise, VM facts from previous call (when the VM was still in existence) will be returned.
-            decon.result['vm_facts'] = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
+        vdc_facts = None
+        if vm_should_exist:
+            if decon.result['changed']:
+                # There were changes - refresh VM and VDC facts.
+                vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
+                _, vdc_facts = decon.vdc_find(arg_vdc_id=vdc_id)
+        decon.result['vm_facts'] = decs_vm_package_facts(vm_facts, vdc_facts)
         amodule.exit_json(**decon.result)
 
 

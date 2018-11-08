@@ -27,15 +27,13 @@ import requests
 from ansible.module_utils.basic import AnsibleModule
 
 #
-# TODO: the following functionality to be implemented
-# 1) vm_ext_network - direct IP allocation to VM - requires user accessible API (not cloud broker level)
+# TODO: the following functionality to be implemented and/or tested
+# 1) vm_extnetwork - direct IP allocation to VM - in testing since 07 Nov 2018
 # 2) vdc_delete - need decision if we allow force delete (any existing VMs to be deleted)
-# 3) vdc_portforwards (?) - do we need to manage it separate from VMs?
 # 4) workflow callbacks
 # 5) run phase states
 # 6) vm_tags - set/manage VM tags
 # 7) vm_attributes - change VM attributes (name, annotation) after VM creation - do we need this in Ansible?
-# 8) verify that result['changed'] value is set correctly for all execution plans
 # 9) test vm_restore() method and execution plans that involve vm_restore()
 #
 
@@ -428,8 +426,17 @@ class DECSController(object):
         self.result['changed'] = True
         return
 
-    def vm_extnetwork(self):
-        """Manage external network allocation for the VM"""
+    def vm_extnetwork(self, arg_vm_dict, arg_desired_state):
+        """Manage external network allocation for the VM.
+        This method will either attach or detach external network IP address (aka direct IP address) to/from the
+        specified VM.
+        Only one external IP address can be present for each VM (this limitation may be removed in the future).
+
+        @param arg_vm_dict: dictionary with VM facts. It identifies the VM for which external network IP address
+        configuration is requested.
+        @param arg_desired_state: specifies the desired state for the external network IP address attached to VM.
+        Valid values are 'present' or 'absent'.
+        """
 
         self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_extnetwork")
 
@@ -441,20 +448,45 @@ class DECSController(object):
 
         # /cloudapi/externalnetwork/list
         # accountId - required, integer
-
-        # NEW in : /cloudapi/machines/listExternalNetworks
+        #
+        # NEW in 2.4.5+: /cloudapi/machines/listExternalNetworks
         # machineId - required
-
+        #
         # /cloudapi/machines/attachExternalNetwork
         # machineId - required, integer
         # NEW in : externalNetworkId - optional, integer
-        #
         # Returns anything besides HTTP response?
-
+        #
         # /cloudapi/machines/detachExternalNetwork
         # machineId - required, integer
-        # NEW in in :
+        # NEW in :
+        #
 
+        api_params = dict(machineId=arg_vm_dict['id'])
+
+        ext_network_present = False
+        # look up external network in the provided arg_vm_dict
+        for item in arg_vm_dict['interfaces']:
+            if item['type'] == "PUBLIC":
+                ext_network_present = True
+                break
+
+        if arg_desired_state == 'present' and not ext_network_present:
+            api_url = "/restmachine/cloudapi/machines/attachExternalNetwork"
+        elif arg_desired_state == 'absent' and ext_network_present:
+            api_url = "/restmachine/cloudapi/machines/detachExternalNetwork"
+        else:
+            self.result['failed'] = False
+            self.result['msg'] = ("vm_extnetwork(): no change required for external IP assignment to VM ID {}, "
+                                  "external IP presence flag {}, requested state '{}'.").format(arg_vm_dict['id'],
+                                                                                                ext_network_present,
+                                                                                                arg_desired_state)
+            return
+
+        self.decs_api_call(requests.post, api_url, api_params)
+        # On success the above call will return here. On error it will abort execution by calling fail_json.
+        self.result['failed'] = False
+        self.result['changed'] = True
         return
 
     def vm_facts(self, arg_vm_id=0,
