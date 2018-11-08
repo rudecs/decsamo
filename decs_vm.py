@@ -339,15 +339,33 @@ from ansible.module_utils.basic import env_fallback
 from ansible.module_utils.decs_utility import *
 
 
-def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None):
+def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False):
     """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
     be returned to the upstream Ansible engine at the completion of the module run.
 
     @param arg_vm_facts: dictionary with VM facts as returned by API call to .../machines/get
     @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
+    @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
     """
 
-    ret_dict = dict()
+    ret_dict = dict(id=0,
+                    name="none",
+                    state="CHECK_MODE",
+                    username="",
+                    password="",
+                    vdc_id=0,
+                    vdc_name="",
+                    vdc_ext_ip="",
+                    int_ip="",
+                    ext_ip="",
+                    ext_netmask="",
+                    ext_gateway="",
+                    ext_mac=""
+                    )
+
+    if arg_check_mode:
+        # in check mode return immediately with the default values
+        return ret_dict
 
     ret_dict['id'] = arg_vm_facts['id']
     ret_dict['name'] = arg_vm_facts['name']
@@ -359,16 +377,9 @@ def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None):
     if arg_vdc_facts is not None:
         ret_dict['vdc_name'] = arg_vdc_facts['name']
         ret_dict['vdc_ext_ip'] = arg_vdc_facts['externalnetworkip']
-    else:
-        ret_dict['vdc_name'] = ""
-        ret_dict['vdc_ext_ip'] = ""
 
     ret_dict['int_ip'] = arg_vm_facts['interfaces'][0]['ipAddress']
 
-    ret_dict['ext_ip'] = ""
-    ret_dict['ext_netmask'] = ""
-    ret_dict['ext_gateway'] = ""
-    ret_dict['ext_mac'] = ""
     # Look up external network in the provided arg_vm_dict - select the 1-st record of type PUBLIC
     # NOTE that current implementation does not support multiple direct IP addresses assigned to a VM, but this
     # may change in the future.
@@ -657,7 +668,7 @@ def main():
                 # There were changes - refresh VM and VDC facts.
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
                 _, vdc_facts = decon.vdc_find(arg_vdc_id=vdc_id)
-        decon.result['vm_facts'] = decs_vm_package_facts(vm_facts, vdc_facts)
+        decon.result['vm_facts'] = decs_vm_package_facts(vm_facts, vdc_facts, amodule.check_mode)
         amodule.exit_json(**decon.result)
 
 
