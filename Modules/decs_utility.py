@@ -401,6 +401,63 @@ class DECSController(object):
         self.amodule.fail_json(**self.result)
         return None
 
+    def vm_bootdisk_size(self, arg_vm_dict, arg_boot_disk):
+        """Manages size of the boot disk. Note that the size of the boot disk can only grow. This method will issue
+        a warning if you try to reduce the size of the boot disk.
+
+        @param arg_vm_dict: dictionary with VM facts. It identifies the VM for which boot disk size change is
+        requested.
+        @param arg_boot_disk: dictionary that contains boot disk parameters. Only 'size' parameter will be used by
+        this method. All other keys, if any, will be ignored.
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_bootdisk_size")
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = ("vm_bootdisk_size() in check mode: change boot disk size for VM ID {} "
+                                  "was requested.").format(arg_vm_dict['id'])
+            return
+
+        if arg_boot_disk is None or 'size' not in arg_boot_disk:
+            self.result['failed'] = False
+            self.result['warning'] = ("vm_bootdisk_size(): no boot disk size specified for VM ID {}, skipping "
+                                      "the changes as there is nothing to do.").format(arg_vm_dict['id'])
+            return
+
+        bdisk_id = 0
+        bdisk_size = 0
+        # we will look for the 1st occurence of what is expected to be a boot disk
+        for disk in arg_vm_dict['disks']:
+            if disk['type'] == "B" and disk['name'] == "Boot disk":
+                bdisk_id = disk['id']
+                bdisk_size = disk['sizeMax']
+                break
+
+        if not bdisk_id:
+            self.result['failed'] = False
+            self.result['warning'] = ("vm_bootdisk_size(): cannot identify boot disk of VM ID {}, skipping "
+                                      "the changes.").format(arg_vm_dict['id'])
+            return
+
+        if bdisk_size >= arg_boot_disk['size']:
+            self.result['failed'] = False
+            self.result['msg'] = ("vm_bootdisk_size(): new boot disk size {} for VM ID {} is not greater than the "
+                                  "current size {} - no changes done.").format(arg_boot_disk['size'],
+                                                                               arg_vm_dict['id'],
+                                                                               bdisk_size)
+            return
+
+        api_params = dict(diskId=bdisk_id,
+                          size=arg_boot_disk['size'])
+        self.decs_api_call(requests.post, "/restmachine/cloudapi/disks/resize", api_params)
+        # On success the above call will return here. On error it will abort execution by calling fail_json.
+        self.result['failed'] = False
+        self.result['changed'] = True
+
+        return
+
     def vm_delete(self, arg_vm_id, arg_permanently=False):
         """Delete a VM identified by VM ID. It is assumed that the VM with the specified ID exists.
 

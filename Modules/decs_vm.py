@@ -362,8 +362,8 @@ def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False
                     ext_mac=""
                     )
 
-    if arg_check_mode:
-        # in check mode return immediately with the default values
+    if arg_check_mode or arg_vm_facts is None:
+        # if in check mode (or void facts provided) return immediately with the default values
         return ret_dict
 
     ret_dict['id'] = arg_vm_facts['id']
@@ -520,12 +520,14 @@ def main():
                 # check port forwards / check size / nop
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 # pause or power off the vm, then check port forwards / check size
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'], wait_for_state_change=7)
         elif vm_facts['status'] in ("PAUSED", "HALTED"):
             if amodule.params['state'] == 'absent':
@@ -534,10 +536,12 @@ def main():
             elif amodule.params['state'] in ('present', 'paused', 'poweredoff'):
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'poweredon':
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
         elif vm_facts['status'] == "DELETED":
@@ -547,13 +551,13 @@ def main():
                 # TODO - do we need updated vm_facts to manage port forwards and size after VM is restored?
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                # decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 # decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'absent':
                 decon.result['failed'] = False
                 decon.result['changed'] = False
-                decon.result['msg'] = "No state change required for VM ID {} because of its current status {}".format(
-                    vm_id, vm_facts['status']
-                )
+                decon.result['msg'] = ("No state change required for VM ID {} because of its "
+                                       "current status '{}'").format(vm_id, vm_facts['status'])
                 vm_should_exist = False
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 decon.result['failed'] = True

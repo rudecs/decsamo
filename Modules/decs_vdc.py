@@ -193,13 +193,44 @@ vdc_facts:
     description: facts about the virtual machine 
     returned: always
     type: dict
-    sample: None
+    sample:
+      vdc_facts:
+        vdc_id: 100
+        vdc_name: MySandboxVDC
+        state: DEPLOYED
+        vdc_ext_ip: 192.168.13.13
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.basic import env_fallback
 
 from ansible.module_utils.decs_utility import *
+
+
+def decs_vdc_package_facts(arg_vdc_facts, arg_check_mode=False):
+    """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
+    be returned to the upstream Ansible engine at the completion of the module run.
+
+    @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
+    @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
+    """
+
+    ret_dict = dict(vdc_id=0,
+                    vdc_name="none",
+                    state="CHECK_MODE",
+                    vdc_ext_ip="",
+                    )
+
+    if arg_check_mode or arg_vdc_facts is None:
+        # in check mode (or void facts provided) return immediately with the default values
+        return ret_dict
+
+    ret_dict['vdc_id'] = arg_vdc_facts['id']
+    ret_dict['vdc_name'] = arg_vdc_facts['name']
+    ret_dict['state'] = arg_vdc_facts['status']
+    ret_dict['vdc_ext_ip'] = arg_vdc_facts['externalnetworkip']
+
+    return ret_dict
 
 def decs_vdc_parameters():
     """Build and return a dictionary of parameters expected by decs_vdc module in a form accepted
@@ -413,11 +444,13 @@ def main():
         amodule.fail_json(**decon.result)
     else:
         # prepare VDC facts to be returned as part of decon.result and then call exit_json(...)
-        if vdc_should_exist and not amodule.check_mode:
-            # If we arrive here, there is a good chance that the VDC is present - get fresh VDC facts from
-            # the cloud by VDC ID.
-            # Otherwise, VDC facts from previous call (when the VDC was still in existence) will be returned.
-            _, decon.result['vdc_facts'] = decon.vdc_find(arg_vdc_id=vdc_id)
+        if vdc_should_exist:
+            if decon.results['changed']:
+                # If we arrive here, there is a good chance that the VDC is present - get fresh VDC facts from
+                # the cloud by VDC ID.
+                # Otherwise, VDC facts from previous call (when the VDC was still in existence) will be returned.
+                _, decon.result['vdc_facts'] = decon.vdc_find(arg_vdc_id=vdc_id)
+        decon.result['vdc_facts'] = decs_vdc_package_facts(vdc_facts, amodule.check_mode)
         amodule.exit_json(**decon.result)
 
 
