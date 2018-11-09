@@ -1,0 +1,44 @@
+---
+- hosts: ansible_master
+  tasks:
+  - name: create a VM with port forwards and direct IP address
+    decs_vm:
+      annotation: "VM end to end test"
+      authenticator: oauth2
+      boot_disk:
+        size: 10
+        model: ovs
+        pool: boot
+      controller_url: "https://ds1.digitalenergy.online"
+      cpu: 2
+      image_name: "Ubuntu 16.04 v1.1"
+      name: PlaybookTestVM02
+      ram: 4096
+      port_forwards:
+        - ext_port: 21022
+          int_port: 22
+          proto: tcp
+      ext_network: present
+      state: present
+      tags: "PROJECT:Ansible STATUS:Test"
+      tenant: "GreyseDevelopment"
+      vdc_name: "TestFromAPI04"
+    delegate_to: localhost
+    register: new_vm
+
+  - debug:
+      var: vm_facts
+
+  - name: add newly created VM to the hosts inventory by name target_vm
+    add_host:
+      groups: just_created
+      hostname: "{{ new_vm.vm_facts.name }}"
+      ansible_host: "{{ new_vm.vm_facts.vdc_ext_ip }}"
+      ansible_port: 21022
+      ansible_user: "{{ new_vm.vm_facts.username }}"
+      ansible_password: "{{ new_vm.vm_facts.password }}"
+
+- hosts: just_created
+  tasks:
+  - name: check connectivity to the newly created VM
+    command: uname -a
