@@ -859,7 +859,8 @@ class DECSController(object):
                      arg_cpu, arg_ram,
                      arg_boot_disk, arg_image_id,
                      arg_data_disks=None,
-                     arg_annotation=""):
+                     arg_annotation="",
+                     arg_userdata=None):
         """Manage VM provisioning.
         To remove VM use vm_remove method.
         To resize VM use vm_size, to manage VM power state use vm_powerstate method.
@@ -869,7 +870,7 @@ class DECSController(object):
 
         #
         # TODO - add support for different types of boot & data disks
-        # Currently type attribute of boot & data disk specifications is ignored until new storage provider types
+        # Currently type attribute of boot & data disk specifications are ignored until new storage provider types
         # are implemented into the cloud platform.
         #
 
@@ -896,6 +897,9 @@ class DECSController(object):
                           imageId=arg_image_id,
                           disksize=arg_boot_disk['size'],
                           datadisks=data_disk_sizes,)
+        if arg_userdata:
+            api_params['userdata'] = json.dumps(arg_userdata)  # we need to pass a string object as "userdata" 
+        
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/create", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
@@ -905,7 +909,7 @@ class DECSController(object):
 
     def vm_resize_vector(self, arg_vm_dict, arg_cpu, arg_ram):
         """Check if the VM size parameters passed to this function are different from the current VM configuration.
-        This method is usually called to see if the VM needs to be resized in the course of module run, as
+        This method is intended to be called to see if the VM would be resized in the course of module run, as
         sometimes resizing may happen implicitly (e.g. when state = present and the specified size is different
         from the current configuration of per-existing target VM.
 

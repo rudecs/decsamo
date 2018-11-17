@@ -174,6 +174,18 @@ options:
           it accordingly. Note that resize operation on a running VM may generate errors as not all OS images support
           hot resize feature.'
         required: no
+    ssh_key:
+        description:
+        - 'SSH public key to be deployed on to the new VM for I(ssh_key_user). If I(ssh_key_user) is not specified,
+          the key will not be deployed, and a warning is generated.'
+        - This parameter is valid at VM creation time only and ignored for any operation on existing VMs.
+        required: no
+    ssh_key_user:
+        description:
+        - User for which I(ssh_key) should be deployed.
+        - If I(ssh_key) is not specified, this parameter is ignored and a warning is generated.
+        - This parameter is valid at VM creation time only and ignored for any operation on existing VMs.
+        required: no
     state:
         description:
         - Specify the desired state of the virtual machine at the exit of the module.
@@ -443,6 +455,8 @@ def decs_vm_parameters():
                       fallback=(env_fallback, ['DECS_PASSWORD'])),
         port_forwards=dict(type='list', default=[], required=False),
         ram=dict(type='int', required=False),
+        ssh_key=dict(type='str', required=False),
+        ssh_key_user=dict(type='str', required=False),
         state=dict(type='str',
                    default='present',
                    choices=['absent', 'paused', 'poweredoff', 'poweredon', 'present']),
@@ -640,12 +654,21 @@ def main():
             if not decon.result['failed'] and osimage_facts:
                 # no errors thus far and we have: target VDC ID and requested OS image ID - we are ready to
                 # provision the VM
+                if amodule.params['ssh_key'] and amodule.params['ssh_key_user']:
+                    cloud_init_params = {'users': [
+                        {"name": amodule.params['ssh_key_user'], 
+                         "ssh-authorized-keys": [amodule.params['ssh_key']],
+                         "shell": '/bin/bash'}
+                         ]}
+                else:
+                    cloud_init_params=None
                 vm_id = decon.vm_provision(arg_vdc_id=vdc_id, arg_vm_name=amodule.params['name'],
                                            arg_cpu=amodule.params['cpu'], arg_ram=amodule.params['ram'],
                                            arg_boot_disk=amodule.params['boot_disk'],
                                            arg_image_id=osimage_facts['id'],
                                            arg_data_disks=amodule.params['data_disks'],
-                                           arg_annotation=amodule.params['annotation'])
+                                           arg_annotation=amodule.params['annotation'],
+                                           arg_userdata=cloud_init_params)
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
                 decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
