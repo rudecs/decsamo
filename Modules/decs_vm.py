@@ -114,6 +114,14 @@ options:
           vm_facts["interfaces"][1]["params"] - a string formatted like "gateway:123.45.67.1 externalnetworkid:1"'
         default: absent
         choices: [ present, absent ]
+    ext_network_id:
+        description:
+        - 'Specify network ID from which the external IP address will be taken when external network assignment
+          is requested.'
+        - 'This parameter is optional and valid for creating external network assignment only, i.e. when
+          I(ext_network=present).'
+        - 'If no I(ext_network_id) is specified, the external IP address will be taken from default network'
+        required: no
     id:
         description:
         - ID of the VM.
@@ -354,9 +362,12 @@ from ansible.module_utils.decs_utility import *
 def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False):
     """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
     be returned to the upstream Ansible engine at the completion of the module run.
+
     @param arg_vm_facts: dictionary with VM facts as returned by API call to .../machines/get
     @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
     @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
+
+    @return: dictionary of VM facts, containing suffucient information to manage the VM in subsequent tasks.
     """
 
     ret_dict = dict(id=0,
@@ -411,7 +422,8 @@ def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False
 
 def decs_vm_parameters():
     """Build and return a dictionary of parameters expected by decs_vm module in a form accepted
-    by AnsibleModule utility class."""
+    by AnsibleModule utility class.
+    """
 
     return dict(
         annotation=dict(type='str',
@@ -440,6 +452,7 @@ def decs_vm_parameters():
         ext_network=dict(type='str',
                          default='absent',
                          choices=['absent', 'present']),
+        ext_network_id=dict(type='int', default=0, required=False),
         # iconf
         id=dict(type='int'),
         image_name=dict(type='str', required=False),
@@ -533,14 +546,14 @@ def main():
             elif amodule.params['state'] in ('present', 'poweredon'):
                 # check port forwards / check size / nop
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 # pause or power off the vm, then check port forwards / check size
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'], wait_for_state_change=7)
         elif vm_facts['status'] in ("PAUSED", "HALTED"):
@@ -549,12 +562,12 @@ def main():
                 vm_should_exist = False
             elif amodule.params['state'] in ('present', 'paused', 'poweredoff'):
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'poweredon':
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
@@ -564,7 +577,7 @@ def main():
                 decon.vm_restore(arg_vm_id=vm_id)
                 # TODO - do we need updated vm_facts to manage port forwards and size after VM is restored?
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 # decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 # decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'absent':
@@ -587,7 +600,7 @@ def main():
                 # consider moving lines 502-546 to a convenience function and reuse it throughout this module
                 # vm_id = decon.vm_provision(...)
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 pass
             elif amodule.params['state'] == 'absent':
                 decon.result['failed'] = False
@@ -671,7 +684,7 @@ def main():
                                            arg_userdata=cloud_init_params)
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 # TODO - configure tags for the new VM if corresponding parameters are specified
                 # if decon.check_amodule_argument('tags', abort=False):
                 #
