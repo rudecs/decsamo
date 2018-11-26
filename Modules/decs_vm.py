@@ -114,6 +114,14 @@ options:
           vm_facts["interfaces"][1]["params"] - a string formatted like "gateway:123.45.67.1 externalnetworkid:1"'
         default: absent
         choices: [ present, absent ]
+    ext_network_id:
+        description:
+        - 'Specify network ID from which the external IP address will be taken when external network assignment
+          is requested.'
+        - 'This parameter is optional and valid for creating external network assignment only, i.e. when
+          I(ext_network=present).'
+        - 'If no I(ext_network_id) is specified, the external IP address will be taken from default network'
+        required: no
     id:
         description:
         - ID of the VM.
@@ -173,6 +181,18 @@ options:
         - 'If you set this parameter for an existing VM, then the module will check if VM resize is necessary and do
           it accordingly. Note that resize operation on a running VM may generate errors as not all OS images support
           hot resize feature.'
+        required: no
+    ssh_key:
+        description:
+        - 'SSH public key to be deployed on to the new VM for I(ssh_key_user). If I(ssh_key_user) is not specified,
+          the key will not be deployed, and a warning is generated.'
+        - This parameter is valid at VM creation time only and ignored for any operation on existing VMs.
+        required: no
+    ssh_key_user:
+        description:
+        - User for which I(ssh_key) should be deployed.
+        - If I(ssh_key) is not specified, this parameter is ignored and a warning is generated.
+        - This parameter is valid at VM creation time only and ignored for any operation on existing VMs.
         required: no
     state:
         description:
@@ -342,9 +362,12 @@ from ansible.module_utils.decs_utility import *
 def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False):
     """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
     be returned to the upstream Ansible engine at the completion of the module run.
+
     @param arg_vm_facts: dictionary with VM facts as returned by API call to .../machines/get
     @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
     @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
+
+    @return: dictionary of VM facts, containing suffucient information to manage the VM in subsequent tasks.
     """
 
     ret_dict = dict(id=0,
@@ -399,7 +422,8 @@ def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False
 
 def decs_vm_parameters():
     """Build and return a dictionary of parameters expected by decs_vm module in a form accepted
-    by AnsibleModule utility class."""
+    by AnsibleModule utility class.
+    """
 
     return dict(
         annotation=dict(type='str',
@@ -428,6 +452,7 @@ def decs_vm_parameters():
         ext_network=dict(type='str',
                          default='absent',
                          choices=['absent', 'present']),
+        ext_network_id=dict(type='int', default=0, required=False),
         # iconf
         id=dict(type='int'),
         image_name=dict(type='str', required=False),
@@ -443,6 +468,8 @@ def decs_vm_parameters():
                       fallback=(env_fallback, ['DECS_PASSWORD'])),
         port_forwards=dict(type='list', default=[], required=False),
         ram=dict(type='int', required=False),
+        ssh_key=dict(type='str', required=False),
+        ssh_key_user=dict(type='str', required=False),
         state=dict(type='str',
                    default='present',
                    choices=['absent', 'paused', 'poweredoff', 'poweredon', 'present']),
@@ -519,14 +546,14 @@ def main():
             elif amodule.params['state'] in ('present', 'poweredon'):
                 # check port forwards / check size / nop
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 # pause or power off the vm, then check port forwards / check size
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'], wait_for_state_change=7)
         elif vm_facts['status'] in ("PAUSED", "HALTED"):
@@ -535,12 +562,12 @@ def main():
                 vm_should_exist = False
             elif amodule.params['state'] in ('present', 'paused', 'poweredoff'):
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'poweredon':
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
                 decon.vm_powerstate(vm_facts, amodule.params['state'])
@@ -550,7 +577,7 @@ def main():
                 decon.vm_restore(arg_vm_id=vm_id)
                 # TODO - do we need updated vm_facts to manage port forwards and size after VM is restored?
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 # decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
                 # decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
             elif amodule.params['state'] == 'absent':
@@ -573,7 +600,7 @@ def main():
                 # consider moving lines 502-546 to a convenience function and reuse it throughout this module
                 # vm_id = decon.vm_provision(...)
                 # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 pass
             elif amodule.params['state'] == 'absent':
                 decon.result['failed'] = False
@@ -640,15 +667,24 @@ def main():
             if not decon.result['failed'] and osimage_facts:
                 # no errors thus far and we have: target VDC ID and requested OS image ID - we are ready to
                 # provision the VM
+                if amodule.params['ssh_key'] and amodule.params['ssh_key_user']:
+                    cloud_init_params = {'users': [
+                        {"name": amodule.params['ssh_key_user'], 
+                         "ssh-authorized-keys": [amodule.params['ssh_key']],
+                         "shell": '/bin/bash'}
+                         ]}
+                else:
+                    cloud_init_params=None
                 vm_id = decon.vm_provision(arg_vdc_id=vdc_id, arg_vm_name=amodule.params['name'],
                                            arg_cpu=amodule.params['cpu'], arg_ram=amodule.params['ram'],
                                            arg_boot_disk=amodule.params['boot_disk'],
                                            arg_image_id=osimage_facts['id'],
                                            arg_data_disks=amodule.params['data_disks'],
-                                           arg_annotation=amodule.params['annotation'])
+                                           arg_annotation=amodule.params['annotation'],
+                                           arg_userdata=cloud_init_params)
                 vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
                 decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'])
+                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
                 # TODO - configure tags for the new VM if corresponding parameters are specified
                 # if decon.check_amodule_argument('tags', abort=False):
                 #

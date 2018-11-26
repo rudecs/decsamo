@@ -483,7 +483,7 @@ class DECSController(object):
         self.result['changed'] = True
         return
 
-    def vm_extnetwork(self, arg_vm_dict, arg_desired_state):
+    def vm_extnetwork(self, arg_vm_dict, arg_desired_state, arg_ext_net_id=0):
         """Manage external network allocation for the VM.
         This method will either attach or detach external network IP address (aka direct IP address) to/from the
         specified VM.
@@ -493,6 +493,7 @@ class DECSController(object):
         configuration is requested.
         @param arg_desired_state: specifies the desired state for the external network IP address attached to VM.
         Valid values are 'present' or 'absent'.
+        @param arg_ext_net_id: specifies external network ID to get external IP address for this VM from.
         """
 
         self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_extnetwork")
@@ -520,13 +521,16 @@ class DECSController(object):
         #
 
         api_params = dict(machineId=arg_vm_dict['id'])
+        if arg_ext_net_id > 0:  # better check, so that only positive IDs are acted upon
+                api_params['externalNetworkId'] = arg_ext_net_id
 
         ext_network_present = False
         # look up external network in the provided arg_vm_dict
         for item in arg_vm_dict['interfaces']:
             if item['type'] == "PUBLIC":
-                ext_network_present = True
-                break
+                if not arg_next_id or (arg_ext_net_id > 0 and arg_ext_net_id == item['networkId']):
+                    ext_network_present = True
+                    break
 
         if arg_desired_state == 'present' and not ext_network_present:
             api_url = "/restmachine/cloudapi/machines/attachExternalNetwork"
@@ -535,9 +539,10 @@ class DECSController(object):
         else:
             self.result['failed'] = False
             self.result['msg'] = ("vm_extnetwork(): no change required for external IP assignment to VM ID {}, "
-                                  "external IP presence flag {}, requested state '{}'.").format(arg_vm_dict['id'],
-                                                                                                ext_network_present,
-                                                                                                arg_desired_state)
+                                  "external IP presence flag {}, requested network ID {}, "
+                                  "requested state '{}'.").format(arg_vm_dict['id'],
+                                   ext_network_present, arg_ext_net_id,
+                                   arg_desired_state)
             return
 
         self.decs_api_call(requests.post, api_url, api_params)
@@ -588,7 +593,7 @@ class DECSController(object):
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/get", api_params)
         if api_resp.status_code == 200:
             ret_vm_id = arg_vm_id
-            ret_vm_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
+            ret_vm_dict = json.loads(api_resp.content.decode('utf8'))
             ret_vdc_id = ret_vm_dict['cloudspaceid']
         else:
             self.result['warning'] = ("vm_get_by_id(): failed to get VM by ID {}. HTTP code {}, "
@@ -859,7 +864,8 @@ class DECSController(object):
                      arg_cpu, arg_ram,
                      arg_boot_disk, arg_image_id,
                      arg_data_disks=None,
-                     arg_annotation=""):
+                     arg_annotation="",
+                     arg_userdata=None):
         """Manage VM provisioning.
         To remove VM use vm_remove method.
         To resize VM use vm_size, to manage VM power state use vm_powerstate method.
@@ -869,7 +875,7 @@ class DECSController(object):
 
         #
         # TODO - add support for different types of boot & data disks
-        # Currently type attribute of boot & data disk specifications is ignored until new storage provider types
+        # Currently type attribute of boot & data disk specifications are ignored until new storage provider types
         # are implemented into the cloud platform.
         #
 
@@ -896,6 +902,9 @@ class DECSController(object):
                           imageId=arg_image_id,
                           disksize=arg_boot_disk['size'],
                           datadisks=data_disk_sizes,)
+        if arg_userdata:
+            api_params['userdata'] = json.dumps(arg_userdata)  # we need to pass a string object as "userdata" 
+        
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/create", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
         self.result['failed'] = False
@@ -905,7 +914,7 @@ class DECSController(object):
 
     def vm_resize_vector(self, arg_vm_dict, arg_cpu, arg_ram):
         """Check if the VM size parameters passed to this function are different from the current VM configuration.
-        This method is usually called to see if the VM needs to be resized in the course of module run, as
+        This method is intended to be called to see if the VM would be resized in the course of module run, as
         sometimes resizing may happen implicitly (e.g. when state = present and the specified size is different
         from the current configuration of per-existing target VM.
 
@@ -1062,8 +1071,7 @@ class DECSController(object):
         image_list = json.loads(api_resp.content.decode('utf8'))
         for image_record in image_list:
             if image_record['name'] == arg_osimage_name and image_record['status'] == "CREATED":
-                ret_image_facts = copy.deepcopy(image_record)
-                return ret_image_facts
+                return image_record
 
         self.result['failed'] = True
         self.result['msg'] = "Failed to find OS image by name '{}'.".format(arg_osimage_name)
@@ -1115,7 +1123,7 @@ class DECSController(object):
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/cloudspaces/get", api_params)
         if api_resp.status_code == 200:
             ret_vdc_id = arg_vdc_id
-            ret_vdc_dict = copy.deepcopy(json.loads(api_resp.content.decode('utf8')))
+            ret_vdc_dict = json.loads(api_resp.content.decode('utf8'))
         else:
             self.result['warning'] = ("vdc_get_by_id(): failed to get VDC by ID {}. HTTP code {}, "
                                       "response {}.").format(arg_vdc_id, api_resp.status_code, api_resp.reason)
@@ -1392,9 +1400,6 @@ class DECSController(object):
         Returns non zero tenant ID and a dictionary with tenant details on success, 0 and empty dictionary otherwise.
         """
 
-        ret_tenant_id = 0
-        ret_tenant_dict = dict()
-
         if arg_tenant_name == "":
             self.result['failed'] = True
             self.result['msg'] = "Cannot find tenant if tenant name is empty."
@@ -1407,10 +1412,9 @@ class DECSController(object):
             tenants_list = json.loads(api_resp.content.decode('utf8'))
             for tenant_record in tenants_list:
                 if tenant_record['name'] == arg_tenant_name:
-                    ret_tenant_id = tenant_record['id']
-                    ret_tenant_dict = copy.deepcopy(tenant_record)
+                    return tenant_record['id'], tenant_record
 
-        return ret_tenant_id, ret_tenant_dict
+        return 0, None
 
     def workflow_cb_set(self, arg_workflow_callback, arg_workflow_context=None):
         """Set workflow callback and workflow context value"""
