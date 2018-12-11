@@ -28,7 +28,6 @@ from ansible.module_utils.basic import AnsibleModule
 
 #
 # TODO: the following functionality to be implemented and/or tested
-# 1) vm_extnetwork - direct IP allocation to VM - in testing since 07 Nov 2018
 # 2) vdc_delete - need decision if we allow force delete (any existing VMs to be deleted)
 # 4) workflow callbacks
 # 5) run phase states
@@ -528,7 +527,7 @@ class DECSController(object):
         # look up external network in the provided arg_vm_dict
         for item in arg_vm_dict['interfaces']:
             if item['type'] == "PUBLIC":
-                if not arg_next_id or (arg_ext_net_id > 0 and arg_ext_net_id == item['networkId']):
+                if not arg_ext_net_id or (arg_ext_net_id > 0 and arg_ext_net_id == item['networkId']):
                     ext_network_present = True
                     break
 
@@ -714,10 +713,10 @@ class DECSController(object):
         # pfw_delta_list will be a list of dictionaries that describe _changes_ to the port forwarding rules
         # that existed for the target VM at the moment we entered this method.
         # The dictionary has the following keys:
-        #   ext_port -
-        #   int_port -
-        #   proto -
-        #   action - either 'delete' or 'create'
+        #   ext_port - integer, external port number
+        #   int_port - integer, internal port number
+        #   proto - string, either 'tcp' or 'udp'
+        #   action - string, either 'delete' or 'create'
         #   id - the ID of existing port forwarding rule that should be deleted (applicable when action='delete')
         # NOTE: not all keys may exist in the resulting list!
         pfw_delta_list = []
@@ -731,12 +730,12 @@ class DECSController(object):
             existing_pfw['matched'] = False
             for requested_pfw in arg_pfw_specs:
                 # TODO: portforwarding API needs refactoring.
-                # NOTE!!! Another glitch in the API implementation - .../portforwarding/list returns ports as strings,
+                # NOTE!!! Another glitch in the API implementation - .../portforwarding/list returns port numbers as strings,
                 # while .../portforwarding/create expects them as integers!!!
                 if (int(existing_pfw['publicPort']) == requested_pfw['ext_port'] and
                         int(existing_pfw['localPort']) == requested_pfw['int_port'] and
                         existing_pfw['protocol'] == requested_pfw['proto']):
-                    # full match - existing rule stays:
+                    # full match - existing rule stays as is:
                     # mark requested rule spec as 'new'=False, existing rule spec as 'macthed'=True
                     requested_pfw['new'] = False
                     existing_pfw['matched'] = True
