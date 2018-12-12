@@ -767,8 +767,31 @@ class DECSController(object):
                                   "forwarding rules found. No change applied to VM ID {}.").format(arg_vm_dict['id'])
             return
 
-        # need VDC facts to extract VDC external IP - it is needed to create new port forwarding rules
-        _, vdc_facts = self.vdc_find(arg_vdc_id=arg_vm_dict['cloudspaceid'])
+        # Need VDC facts to extract VDC external IP - it is needed to create new port forwarding rules
+        # Note that in a scenario when VM and VDC are created in the same task we may arrive to here
+        # when VDC is still in DEPLOYING state. Attempt to configure port forward rules in this will generate
+        # an error. So we have to check VDC status and loop for max ~60 seconds here so that the newly VDC
+        # created enters DEPLOYED state 
+        max_retries = 5
+        retry_counter = max_retries
+        while retry_counter > 0:
+            _, vdc_facts = self.vdc_find(arg_vdc_id=arg_vm_dict['cloudspaceid'])
+            if vdc_facts['status'] == "DEPLOYED":
+                break
+            retry_timeout = 5 + 10 * (max_retries - retry_counter)
+            time.sleep(retry_timeout)
+            retry_counter = retry_counter - 1
+
+        if vdc_facts['status'] != "DEPLOYED":
+            # We still cannot manage port forwards due to incompatible VDC state. This is not necessarily an
+            # error that should lead to the task failure, so we register this fact in the module message and
+            # return from the method.
+            #
+            # self.result['failed'] = True
+            self.result['msg'] = ("vm_portforwards(): target VDC ID {} is still in '{}' state, "
+                                  "setting port forwarding rules is not possible.").format(arg_vm_dict['cloudspaceid'],
+                                                                                           vdc_facts['status'])
+            return
 
         # Iterate over pfw_delta_list and first delete port forwarding rules marked for deletion,
         # next create the rules marked for creation.
@@ -868,6 +891,16 @@ class DECSController(object):
         """Manage VM provisioning.
         To remove VM use vm_remove method.
         To resize VM use vm_size, to manage VM power state use vm_powerstate method.
+
+        @param arg_vdc_id: integer ID of the VDC where the VM will be provisioned.
+        @param arg_vm_name: string that specifies the name of the VM.
+        @param arg_cpu: integer count of virtual CPUs to allocate.
+        @param arg_ram: integer volume of RAM to allocate, specified in MB (i.e. pass 4096 to allocate 4GB RAM).
+        @param arg_boot_disk: dictionary with boot disk specifications.
+        @param arg_image_id: integer ID of the OS image to be deployed on the VM.
+        @param arg_data_disks: list of additional data disk sizes in GB. Pass empty list if no data disks needed.
+        @param arg_annotation: string that specified the description for the VM.
+        @param arg_userdata: additional paramters to pass to cloud-init facility of the guest OS.
 
         @return ret_vm_id: integer value that specifies the VM ID of provisioned VM. In check mode it will return 0.
         """
@@ -1393,6 +1426,33 @@ class DECSController(object):
                                                                               arg_desired_state)
         return
 
+    def vdc_vms_list(self, arg_vdc_id=0, arg_vdc_name=""):
+        """List virtual machines in the specified VDC.
+        VDC can be identified either by its ID or by a combination of VDC name and tenant name.
+
+        @param arg_vdc_id: ID the VDC to list VMs from.
+        @param arg_vdc_name: name of the VDC to list VMs from.
+
+        @returns: dictionary of VMs from the specified VDC. Please note that it may return an emtpy dictionary
+        if no VMs are currently present in the VDC.
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_vms_list")
+
+        vdc_id, _ = self.vdc_find(arg_vdc_id, arg_vdc_name)
+
+        if not vdc_id:
+            self.result['failed'] = True
+            self.result['msg'] = "vm_vms_list(): cannot find VDC by ID {} or name '{}'".format(arg_vdc_id, arg_vdc_name)
+
+        api_params = dict(cloudspaceId=vdc_id)
+        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/list", api_params)
+        if api_resp.status_code == 200:
+            vms_list = json.loads(api_resp.content.decode('utf8'))
+
+        return vms_list
+
+
     def tenant_find(self, arg_tenant_name):
         """Find cloud tenant specified by the name anr return facts about the tenant. Tenant is required for certain
         cloud resource management tasks (e.g. creating new VDC).
@@ -1416,7 +1476,9 @@ class DECSController(object):
         return 0, None
 
     def workflow_cb_set(self, arg_workflow_callback, arg_workflow_context=None):
-        """Set workflow callback and workflow context value"""
+        """Set workflow callback and workflow context value.
+        """
+
         self.workflow_callback = arg_workflow_callback
         if arg_workflow_callback != "":
             self.workflow_callback_present = True
@@ -1431,7 +1493,8 @@ class DECSController(object):
         return
 
     def workflow_cb_call(self):
-        """Invoke workflow callback"""
+        """Invoke workflow callback if it was specified earlyer with workflow_cb_set(...) method.
+        """
         #
         # TODO: under construction
         #
