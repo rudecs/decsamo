@@ -355,22 +355,188 @@ vm_facts:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.basic import env_fallback
-
 from ansible.module_utils.decs_utility import *
+class decsamo_vm(DECSController):
+    def __init__(self, arg_amodule):
+        # call superclass constructor first
+        super(decsamo_vm, self).__init__(arg_amodule,
+                                         arg_amodule.params['authenticator'],
+                                         arg_amodule.params['controller_url'],
+                                         arg_amodule.params['jwt'],
+                                         arg_amodule.params['app_id'], arg_amodule.params['app_secret'],
+                                         arg_amodule.params['oauth2_url'],
+                                         arg_amodule.params['user'], arg_amodule.params['password'],
+                                         arg_amodule.params['workflow_callback'], arg_amodule.params['workflow_context'])
+        
+        self.vm_id, self.vm_info, self.vdc_id = self.vm_find(arg_vm_id=arg_amodule.params['id'],
+                                                              arg_vm_name=arg_amodule.params['name'],
+                                                              arg_vdc_id=arg_amodule.params['vdc_id'],
+                                                              arg_vdc_name=arg_amodule.params['vdc_name'],
+                                                              arg_check_state=False)
 
+        self.vm_should_exist = True
+        if not self.vm_id:
+            self.vm_should_exist = False
+        return
 
-def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False):
-    """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
-    be returned to the upstream Ansible engine at the completion of the module run.
+    def nop(self):
+        """No operation (NOP) handler for VM management by DECSAMo decs_vm module.
+        This function is intended to be called from the main switch construct of the module
+        when current state -> desired state change logic does not require any changes to
+        the actual VM state. 
+        """
+        self.result['failed'] = False
+        self.result['changed'] = False
+        if self.vm_id:
+            self.result['msg'] = ("No state change required for VM ID {} because of its "
+                                   "current status '{}'.").format(self.vm_id, self.vm_info['status'])
+        else:
+            self.result['msg'] = ("No state change to '{}' can be done for "
+                                  "non-existent VM.").format(self.amodule.params['state'])
+        return
 
-    @param arg_vm_facts: dictionary with VM facts as returned by API call to .../machines/get
-    @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
-    @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
+    def error(self):
+        """Error handler for VM management by DECSAMo decs_vm module.
+        This function is intended to be called when an invalid state change is requested.
+        Invalid means that the current is invalid for any operations on the VM or the transition 
+        from current to desired state is not technically possible. 
+        """
+        self.result['failed'] = True
+        self.result['changed'] = False
+        if self.vm_id:
+            self.result['msg'] = ("Invalid target state '{}' requested for VM ID {} in the "
+                                   "current status '{}'.").format(self.vm_id,
+                                                                  self.amodule.params['state'],
+                                                                  self.vm_info['status'])
+        else:
+            self.result['msg'] = ("Invalid target state '{}' requested for non-existent VM name '{}' "
+                                   "in VDC ID {} / VDC name '{}'").format(self.amodule.params['state'],
+                                                                          self.amodule.params['name'],
+                                                                          self.amodule.params['vdc_id'],
+                                                                          self.amodule.params['vdc_name'])
+        return
 
-    @return: dictionary of VM facts, containing suffucient information to manage the VM in subsequent tasks.
-    """
+    def create(self):
+        """New VM creation handler for VM management by DECSAMo decs_vm module.
+        This function checks for the presence of required parameters, creates specified VDC if
+        necessary and then deploys a new VM into the specified VDC.
+        """
+        # the following parameters must be present: cpu, ram, image_name, boot_disk
+        # each of the following calls will abort if argument is missing
+        self.check_amodule_argument('cpu')
+        self.check_amodule_argument('ram')
+        self.check_amodule_argument('image_name')
+        self.check_amodule_argument('boot_disk')
+        # if we get through here, all parameters required to create a VM should be set
+        # create VDC if necessary
+        if not self.vdc_id:
+            # target VDC does not exist yet - create it and store the returned ID in vdc_id variable for later use
+            # To create VDC we need tenant name (to obtain ist ID), datacenter name and new VDC name - check
+            # that these parameters are present and proceed. If any such check fails, the following calls will
+            # abort the script
+            self.check_amodule_argument('tenant')
+            self.check_amodule_argument('datacenter')
+            self.check_amodule_argument('vdc_name')
+            if self.amodule.params['tenant'] and self.amodule.params['datacenter']:
+                # try to find tenant by name and get its ID
+                tenant_id, _ = self.tenant_find(self.amodule.params['tenant'])
+                if tenant_id:
+                    # now that we have tenant ID we can create VDC and get vdc_id on success
+                    self.vdc_id = self.vdc_provision(tenant_id, self.amodule.params['datacenter'],
+                                                     self.amodule.params['vdc_name'], self.decs_username)
+                else:
+                    # we failed to get tenant ID - it means we do not have access rights to that tenant
+                    self.result['failed'] = True
+                    self.result['msg'] = ("Current user does not have access to the requested tenant "
+                                            "name '{}' or non-existent tenant specified.").format(
+                        self.amodule.params['tenant'])
+            else:
+                # we miss either tenant or datacenter in the parameters - creating VDC is not possible
+                self.result['failed'] = True
+                self.result['msg'] = ("Cannot create VDC name '{}', because either datacenter or tenant "
+                                        "parameter is missing or emtpy.").format(self.amodule.params['vdc_name'])
+        # find OS image ID that is specified for the new VM
+        osimage_facts = None
+        if not self.result['failed']:
+            # no errors in the workflow thus far and we have target VDC ID - proceed with locating the
+            # requested OS image
+            osimage_facts = self.image_find(self.amodule.params['image_name'], self.vdc_id)
+        if not self.result['failed'] and osimage_facts is not None:
+            # no errors thus far and we have: target VDC ID and requested OS image ID - we are ready to
+            # provision the VM
+            if self.amodule.params['ssh_key'] and self.amodule.params['ssh_key_user']:
+                cloud_init_params = {'users': [
+                    {"name": self.amodule.params['ssh_key_user'],
+                     "ssh-authorized-keys": [self.amodule.params['ssh_key']],
+                     "shell": '/bin/bash'}
+                    ]}
+            else:
+                cloud_init_params = None
+            self.vm_id = self.vm_provision(arg_vdc_id=self.vdc_id, arg_vm_name=self.amodule.params['name'],
+                                        arg_cpu=self.amodule.params['cpu'], arg_ram=self.amodule.params['ram'],
+                                        arg_boot_disk=self.amodule.params['boot_disk'],
+                                        arg_image_id=osimage_facts['id'],
+                                        arg_data_disks=self.amodule.params['data_disks'],
+                                        arg_annotation=self.amodule.params['annotation'],
+                                        arg_userdata=cloud_init_params)
+            self.vm_info = self.vm_facts(arg_vm_id=self.vm_id, arg_vdc_id=self.vdc_id)
+            self.vm_portforwards(self.vm_info, self.amodule.params['port_forwards'])
+            self.vm_extnetwork(self.vm_info, self.amodule.params['ext_network'], self.amodule.params['ext_network_id'])
+            # TODO - configure tags for the new VM if corresponding parameters are specified
+            # if decon.check_amodule_argument('tags', abort=False):
+            #
+            self.vm_should_exist = True
+        return
+    
+    def destroy(self):
+        """VM destroy handler for VM management by DECSAMo decs_vm module.
+        Note that this handler deletes the VM permanently together with all assigned disk resources.
+        """
+        self.vm_delete(arg_vm_id=self.vm_id, arg_permanently=True)
+        self.vm_should_exist = False
+        return
 
-    ret_dict = dict(id=0,
+    def restore(self):
+        """VM restore handler for VM management by DECSAMo decs_vm module.
+        Note that resotring VM is only possible if VM is in DELETED state. If called on a VM
+        that is in any other state, the method will throw an error and abort the execution.
+        """
+        self.vm_restore(arg_vm_id=self.vm_id)
+        # TODO - do we need updated vm_facts to manage port forwards and size after VM is restored?
+        self.vm_info = self.vm_facts(arg_vm_id=self.vm_id, arg_vdc_id=self.vdc_id)
+        self.modify()
+        self.vm_should_exist = True
+        return
+
+    def modify(self, arg_wait_cycles=0):
+        """VM modify handler for VM management by DECSAMo decs_vm module.
+        This method is a convenience wrapper that calls individual VM modification functions as 
+        follows:
+          - modify portforwards;
+          - modify presence of direct external network attachment;
+          - modify boot disk size;
+          - modify CPU and RAM allocations.
+        """
+        self.vm_portforwards(self.vm_info, self.amodule.params['port_forwards'])
+        self.vm_extnetwork(self.vm_info,
+                           self.amodule.params['ext_network'], self.amodule.params['ext_network_id'])
+        self.vm_bootdisk_size(self.vm_info, self.amodule.params['boot_disk'])
+        self.vm_size(self.vm_info,
+                     self.amodule.params['cpu'], self.amodule.params['ram'],
+                     wait_for_state_change=arg_wait_cycles)
+        return
+
+    def package_facts(self, arg_vdc_facts=None, arg_check_mode=False):
+        """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
+        be returned to the upstream Ansible engine at the completion of the module run.
+         
+        @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
+        @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
+        
+        @return: dictionary of VM facts, containing suffucient information to manage the VM in subsequent tasks.
+        """
+        
+        ret_dict = dict(id=0,
                     name="none",
                     state="CHECK_MODE",
                     username="",
@@ -385,105 +551,104 @@ def decs_vm_package_facts(arg_vm_facts, arg_vdc_facts=None, arg_check_mode=False
                     ext_mac=""
                     )
 
-    if arg_check_mode or arg_vm_facts is None:
-        # if in check mode (or void facts provided) return immediately with the default values
+        if arg_check_mode or self.vm_info is None:
+            # if in check mode (or void facts provided) return immediately with the default values
+            return ret_dict
+            
+        ret_dict['id'] = self.vm_info['id']
+        ret_dict['name'] = self.vm_info['name']
+        ret_dict['state'] = self.vm_info['status']
+        ret_dict['username'] = self.vm_info['accounts'][0]['login']
+        ret_dict['password'] = self.vm_info['accounts'][0]['password']
+
+        ret_dict['vdc_id'] = self.vm_info['cloudspaceid']
+        if arg_vdc_facts is not None:
+            ret_dict['vdc_name'] = arg_vdc_facts['name']
+            ret_dict['vdc_ext_ip'] = arg_vdc_facts['externalnetworkip']
+
+        ret_dict['int_ip'] = self.vm_info['interfaces'][0]['ipAddress']
+
+        # Look up external network in the provided arg_vm_dict - select the detected 1-st record of type PUBLIC
+        # NOTE that current implementation does not support multiple direct IP addresses assigned to a VM, but this
+        # may change in the future.
+        for item in self.vm_info['interfaces']:
+            if item['type'] == "PUBLIC":
+                # 'ipAddress' value comes in the form like "192.168.1.10/24", so for IP address we need to split at "/"
+                # and assign resulting list items accordingly
+                ret_dict['ext_ip'], ret_dict['ext_netmask'] = item['ipAddress'].split("/", 1)
+                # 'params' value has form 'gateway:185.193.143.1 externalnetworkId:2', so we need to split twice:
+                # first by ":" and then by " " to get external gateway address
+                ret_dict['ext_gateway'] = item['params'].split(":")[1].split(" ", 1)[0]
+                # and the MAC address of the direct public interface
+                ret_dict['ext_mac'] = item['macAddress']
+                break
+
         return ret_dict
 
-    ret_dict['id'] = arg_vm_facts['id']
-    ret_dict['name'] = arg_vm_facts['name']
-    ret_dict['state'] = arg_vm_facts['status']
-    ret_dict['username'] = arg_vm_facts['accounts'][0]['login']
-    ret_dict['password'] = arg_vm_facts['accounts'][0]['password']
+    @staticmethod    
+    def build_parameters():
+        """Build and return a dictionary of parameters expected by DECSAmo decs_vm module in a form 
+        accepted by AnsibleModule utility class.
+        This dictionary is then used y AnsibleModule class instance to parse and validate parameters
+        passed to the module from the playbook.
+        """
 
-    ret_dict['vdc_id'] = arg_vm_facts['cloudspaceid']
-    if arg_vdc_facts is not None:
-        ret_dict['vdc_name'] = arg_vdc_facts['name']
-        ret_dict['vdc_ext_ip'] = arg_vdc_facts['externalnetworkip']
-
-    ret_dict['int_ip'] = arg_vm_facts['interfaces'][0]['ipAddress']
-
-    # Look up external network in the provided arg_vm_dict - select the 1-st record of type PUBLIC
-    # NOTE that current implementation does not support multiple direct IP addresses assigned to a VM, but this
-    # may change in the future.
-    for item in arg_vm_facts['interfaces']:
-        if item['type'] == "PUBLIC":
-            # 'ipAddress' value comes in the form like "192.168.1.10/24", so for IP address we need to split at "/"
-            # and assign resulting list items accordingly
-            ret_dict['ext_ip'], ret_dict['ext_netmask'] = item['ipAddress'].split("/", 1)
-            # 'params' value has form 'gateway:185.193.143.1 externalnetworkId:2', so we need to split twice:
-            # first by ":" and then by " " to get external gateway address
-            ret_dict['ext_gateway'] = item['params'].split(":")[1].split(" ", 1)[0]
-            # and the MAC address of the direct public interface
-            ret_dict['ext_mac'] = item['macAddress']
-            break
-
-    return ret_dict
-
-
-def decs_vm_parameters():
-    """Build and return a dictionary of parameters expected by decs_vm module in a form accepted
-    by AnsibleModule utility class.
-    """
-
-    return dict(
-        annotation=dict(type='str',
-                        default='',
-                        required=False),
-        # allow_restart=dict(type='bool', required=False, default=False),
-        app_id=dict(type='str',
-                    required=False,
-                    fallback=(env_fallback, ['DECS_APP_ID'])),
-        app_secret=dict(type='str',
+        return dict(
+            annotation=dict(type='str',
+                            default='',
+                            required=False),
+            # allow_restart=dict(type='bool', required=False, default=False),
+            app_id=dict(type='str',
                         required=False,
-                        fallback=(env_fallback, ['DECS_APP_SECRET'])),
-        authenticator=dict(type='str',
-                           required=True,
-                           choices=['legacy', 'oauth2', 'jwt']),
-        boot_disk=dict(type='dict', required=False),
-        # boot_disk_model=dict(type='str', default='ovs', required=False, choices=['ovs', 'iscsi']),
-        # boot_disk_pool=dict(type='str', default='', required=False),
-        controller_url=dict(type='str', required=True),
-        # count=dict(type='int', required=False, default=1),
-        cpu=dict(type='int', required=False),
-        # compute_nodes=dict(type='list', required=False, default=[])
-        # create_vdc=dict(type='bool', required=False, default=False),
-        datacenter=dict(type='str', required=False, default=''),
-        data_disks=dict(type='list', default=[], required=False),
-        ext_network=dict(type='str',
-                         default='absent',
-                         choices=['absent', 'present']),
-        ext_network_id=dict(type='int', default=0, required=False),
-        # iconf
-        id=dict(type='int'),
-        image_name=dict(type='str', required=False),
-        jwt=dict(type='str',
-                 required=False,
-                 fallback=(env_fallback, ['DECS_JWT'])),
-        name=dict(type='str'),
-        oauth2_url=dict(type='str',
-                        required=False,
-                        fallback=(env_fallback, ['DECS_OAUTH2_URL'])),
-        password=dict(type='str',
+                        fallback=(env_fallback, ['DECS_APP_ID'])),
+            app_secret=dict(type='str',
+                            required=False,
+                            fallback=(env_fallback, ['DECS_APP_SECRET'])),
+            authenticator=dict(type='str',
+                               required=True,
+                               choices=['legacy', 'oauth2', 'jwt']),
+            boot_disk=dict(type='dict', required=False),
+            controller_url=dict(type='str', required=True),
+            # count=dict(type='int', required=False, default=1),
+            cpu=dict(type='int', required=False),
+            # compute_nodes=dict(type='list', required=False, default=[])
+            # create_vdc=dict(type='bool', required=False, default=False),
+            datacenter=dict(type='str', required=False, default=''),
+            data_disks=dict(type='list', default=[], required=False),
+            ext_network=dict(type='str',
+                             default='absent',
+                             choices=['absent', 'present']),
+            ext_network_id=dict(type='int', default=0, required=False),
+            id=dict(type='int'),
+            image_name=dict(type='str', required=False),
+            jwt=dict(type='str',
+                     required=False,
+                     fallback=(env_fallback, ['DECS_JWT'])),
+            name=dict(type='str'),
+            oauth2_url=dict(type='str',
+                            required=False,
+                            fallback=(env_fallback, ['DECS_OAUTH2_URL'])),
+            password=dict(type='str',
+                          required=False,
+                          fallback=(env_fallback, ['DECS_PASSWORD'])),
+            port_forwards=dict(type='list', default=[], required=False),
+            ram=dict(type='int', required=False),
+            ssh_key=dict(type='str', required=False),
+            ssh_key_user=dict(type='str', required=False),
+            state=dict(type='str',
+                       default='present',
+                       choices=['absent', 'paused', 'poweredoff', 'poweredon', 'present']),
+            tags=dict(type='str', required=False),
+            tenant=dict(type='str', required=False, default=''),
+            user=dict(type='str',
                       required=False,
-                      fallback=(env_fallback, ['DECS_PASSWORD'])),
-        port_forwards=dict(type='list', default=[], required=False),
-        ram=dict(type='int', required=False),
-        ssh_key=dict(type='str', required=False),
-        ssh_key_user=dict(type='str', required=False),
-        state=dict(type='str',
-                   default='present',
-                   choices=['absent', 'paused', 'poweredoff', 'poweredon', 'present']),
-        tags=dict(type='str', required=False),
-        tenant=dict(type='str', required=False, default=''),
-        user=dict(type='str',
-                  required=False,
-                  fallback=(env_fallback, ['DECS_USER'])),
-        vdc_id=dict(type='int', default=0),
-        vdc_name=dict(type='str', default=""),
-        # wait_for_ip_address=dict(type='bool', required=False, default=False),
-        workflow_callback=dict(type='str', required=False),
-        workflow_context=dict(type='str', required=False),
-    )
+                      fallback=(env_fallback, ['DECS_USER'])),
+            vdc_id=dict(type='int', default=0),
+            vdc_name=dict(type='str', default=""),
+            # wait_for_ip_address=dict(type='bool', required=False, default=False),
+            workflow_callback=dict(type='str', required=False),
+            workflow_context=dict(type='str', required=False),
+        )
 
 # Workflow digest:
 # 1) authenticate to DECS controller & validate authentication by issuing API call - done when creating DECSController
@@ -499,7 +664,7 @@ def decs_vm_parameters():
 
 
 def main():
-    module_parameters = decs_vm_parameters()
+    module_parameters = decsamo_vm.build_parameters()
 
     amodule = AnsibleModule(argument_spec=module_parameters,
                             supports_check_mode=True,
@@ -517,200 +682,78 @@ def main():
                             ],
                             )
 
-    decon = DECSController(amodule,
-                           amodule.params['authenticator'], amodule.params['controller_url'],
-                           amodule.params['jwt'],
-                           amodule.params['app_id'], amodule.params['app_secret'], amodule.params['oauth2_url'],
-                           amodule.params['user'], amodule.params['password'],
-                           amodule.params['workflow_callback'], amodule.params['workflow_context'])
+    # Initialize DECS VM instance object
+    # This object does not necessarily represent an existing VM
+    subj = decsamo_vm(amodule)
 
-    # Check if VM with the specified parameters already exists
-    vm_id, vm_facts, vdc_id = decon.vm_find(arg_vm_id=amodule.params['id'],
-                                            arg_vm_name=amodule.params['name'],
-                                            arg_vdc_id=amodule.params['vdc_id'],
-                                            arg_vdc_name=amodule.params['vdc_name'],
-                                            arg_check_state=False)
-    vm_should_exist = True
-
-    if vm_id:
-        if vm_facts['status'] in ("MIGRATING", "DESTROYING", "ERROR"):
+    if subj.vm_id:
+        if subj.vm_info['status'] in ("MIGRATING", "DESTROYING", "ERROR"):
             # nothing to do for an existing VM in the listed states regardless of the requested state
-            decon.result['failed'] = False
-            decon.result['changed'] = False
-            decon.result['msg'] = ("No change can be done for existing VM ID {} because of its current "
-                                   "status '{}'").format(vm_id, vm_facts['status'])
-        elif vm_facts['status'] == "RUNNING":
+            subj.nop()
+        elif subj.vm_info['status'] == "RUNNING":
             if amodule.params['state'] == 'absent':
-                decon.vm_delete(arg_vm_id=vm_id, arg_permanently=True)
-                vm_should_exist = False
+                subj.destroy()
             elif amodule.params['state'] in ('present', 'poweredon'):
                 # check port forwards / check size / nop
-                decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
-                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
-                decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
+                subj.modify()
             elif amodule.params['state'] in ('paused', 'poweredoff'):
                 # pause or power off the vm, then check port forwards / check size
-                decon.vm_powerstate(vm_facts, amodule.params['state'])
-                decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
-                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
-                decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'], wait_for_state_change=7)
-        elif vm_facts['status'] in ("PAUSED", "HALTED"):
+                subj.vm_powerstate(subj.vm_info, amodule.params['state'])
+                subj.modify(arg_wait_cycles=7)
+        elif subj.vm_info['status'] in ("PAUSED", "HALTED"):
             if amodule.params['state'] == 'absent':
-                decon.vm_delete(arg_vm_id=vm_id, arg_permanently=True)
-                vm_should_exist = False
+                subj.destroy()
             elif amodule.params['state'] in ('present', 'paused', 'poweredoff'):
-                decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
-                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
-                decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
+                subj.modify()
             elif amodule.params['state'] == 'poweredon':
-                decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
-                decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
-                decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
-                decon.vm_powerstate(vm_facts, amodule.params['state'])
-        elif vm_facts['status'] == "DELETED":
+                subj.modify()
+                subj.vm_powerstate(subj.vm_info, amodule.params['state'])
+        elif subj.vm_info['status'] == "DELETED":
             if amodule.params['state'] in ('present', 'poweredon'):
                 # TODO - check if restore API returns VM ID (similarly to VM create API)
-                decon.vm_restore(arg_vm_id=vm_id)
+                subj.vm_restore(arg_vm_id=subj.vm_id)
                 # TODO - do we need updated vm_facts to manage port forwards and size after VM is restored?
-                # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
-                # decon.vm_bootdisk_size(vm_facts, amodule.params['boot_disk'])
-                # decon.vm_size(vm_facts, amodule.params['cpu'], amodule.params['ram'])
+                subj.vm_info = subj.vm_facts(arg_vm_id=subj.vm_id, arg_vdc_id=subj.vdc_id)
+                subj.modify()
             elif amodule.params['state'] == 'absent':
-                decon.result['failed'] = False
-                decon.result['changed'] = False
-                decon.result['msg'] = ("No state change required for VM ID {} because of its "
-                                       "current status '{}'").format(vm_id, vm_facts['status'])
-                vm_should_exist = False
+                subj.nop()
+                subj.vm_should_exist = False
             elif amodule.params['state'] in ('paused', 'poweredoff'):
-                decon.result['failed'] = True
-                decon.result['changed'] = False
-                decon.result['msg'] = ("Invalid target state '{}' requested for VM ID "
-                                       "{} in the current status '{}'").format(vm_id,
-                                                                               amodule.params['state'],
-                                                                               vm_facts['status'])
-        elif vm_facts['status'] == "DESTROYED":
+                subj.error()
+        elif subj.vm_info['status'] == "DESTROYED":
             if amodule.params['state'] in ('present', 'poweredon'):
-                # TODO - recreating a VM found by vm_name in DESTROYED state is not implemented yet
-                # TODO - need to elaborate on the logic of re-creating a VM that was found in DESTROYED state
-                # consider moving lines 502-546 to a convenience function and reuse it throughout this module
-                # vm_id = decon.vm_provision(...)
-                # decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                # decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
+                subj.create()
                 pass
             elif amodule.params['state'] == 'absent':
-                decon.result['failed'] = False
-                decon.result['changed'] = False
-                decon.result['msg'] = ("No state change required for VM ID {} because of its "
-                                       "current status '{}'").format(vm_id, vm_facts['status'])
-                vm_should_exist = False
+                subj.nop()
+                subj.vm_should_exist = False
             elif amodule.params['state'] in ('paused', 'poweredoff'):
-                decon.result['failed'] = True
-                decon.result['changed'] = False
-                decon.result['msg'] = ("Invalid target state '{}' requested for VM ID {} in the "
-                                       "current status '{}'").format(vm_id,
-                                                                     amodule.params['state'],
-                                                                     vm_facts['status'])
+                subj.error()
     else:
         # Preexisting VM was not found.
-        vm_should_exist = False  # we will change it back to True if VM is created or restored
+        # vm_should_exist = False  # now it is initialized in the decsamo_vm constructor
         # If requested state is 'absent' - exit immediately, as there is nothing to do
         if amodule.params['state'] == 'absent':
-            decon.result['failed'] = False
-            decon.result['changed'] = False
-            decon.result['msg'] = "Nothing to do as target state 'absent' was requested for non-existent VM {}".format(
-                amodule.params['name']
-            )
+            subj.nop()
         elif amodule.params['state'] in ('present', 'poweredon'):
-            # Check if all required parameters for VM creation are initialized or abort the module. At this point
-            # the following parameters must be present: cpu, ram, image_name, boot_disk
-            decon.check_amodule_argument('cpu')  # each of the following calls will abort if argument is missing
-            decon.check_amodule_argument('ram')
-            decon.check_amodule_argument('image_name')
-            decon.check_amodule_argument('boot_disk')
-            # if we get through here, all parameters required to create a VM should be set
-            # create VDC if necessary
-            if not vdc_id:
-                # target VDC does not exist yet - create it and store the returned ID in vdc_id variable for later use
-                # To create VDC we need tenant name (to obtain ist ID), datacenter name and new VDC name - check
-                # that these parameters are present and proceed.
-                decon.check_amodule_argument('tenant')
-                decon.check_amodule_argument('datacenter')
-                decon.check_amodule_argument('vdc_name')
-                if amodule.params['tenant'] and amodule.params['datacenter']:
-                    # try to find tenant by name and get its ID
-                    tenant_id, _ = decon.tenant_find(amodule.params['tenant'])
-                    if tenant_id:
-                        # now that we have tenant ID we can create VDC and get vdc_id on success
-                        vdc_id = decon.vdc_provision(tenant_id, amodule.params['datacenter'],
-                                                     amodule.params['vdc_name'], decon.decs_username)
-                    else:
-                        decon.result['failed'] = True
-                        decon.result['msg'] = ("Current user does not have access to the requested tenant "
-                                               "name '{}' or non-existent tenant specified.").format(
-                            amodule.params['tenant'])
-                else:
-                    # we miss either tenant or datacenter in the parameters - creating VDC is not possible
-                    decon.result['failed'] = True
-                    decon.result['msg'] = ("Cannot create VDC name '{}', because either datacenter or tenant "
-                                           "parameter is missing or emtpy.").format(amodule.params['vdc_name'])
-            # find OS image ID that is specified for the new VM
-            osimage_facts = None
-            if not decon.result['failed']:
-                # no errors in the workflow thus far and we have target VDC ID - proceed with locating the
-                # requested OS image
-                osimage_facts = decon.image_find(amodule.params['image_name'], vdc_id)
-            if not decon.result['failed'] and osimage_facts:
-                # no errors thus far and we have: target VDC ID and requested OS image ID - we are ready to
-                # provision the VM
-                if amodule.params['ssh_key'] and amodule.params['ssh_key_user']:
-                    cloud_init_params = {'users': [
-                        {"name": amodule.params['ssh_key_user'], 
-                         "ssh-authorized-keys": [amodule.params['ssh_key']],
-                         "shell": '/bin/bash'}
-                         ]}
-                else:
-                    cloud_init_params=None
-                vm_id = decon.vm_provision(arg_vdc_id=vdc_id, arg_vm_name=amodule.params['name'],
-                                           arg_cpu=amodule.params['cpu'], arg_ram=amodule.params['ram'],
-                                           arg_boot_disk=amodule.params['boot_disk'],
-                                           arg_image_id=osimage_facts['id'],
-                                           arg_data_disks=amodule.params['data_disks'],
-                                           arg_annotation=amodule.params['annotation'],
-                                           arg_userdata=cloud_init_params)
-                vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
-                decon.vm_portforwards(vm_facts, amodule.params['port_forwards'])
-                decon.vm_extnetwork(vm_facts, amodule.params['ext_network'], amodule.params['ext_network_id'])
-                # TODO - configure tags for the new VM if corresponding parameters are specified
-                # if decon.check_amodule_argument('tags', abort=False):
-                #
-                vm_should_exist = True
+            subj.create()
         elif amodule.params['state'] in ('paused', 'poweredoff'):
-            decon.result['failed'] = True
-            decon.result['changed'] = False
-            decon.result['msg'] = ("Invalid target state '{}' requested for non-existent VM name '{}' "
-                                   "in VDC ID {} / VDC name '{}'").format(amodule.params['state'],
-                                                                          amodule.params['name'],
-                                                                          amodule.params['vdc_id'],
-                                                                          amodule.params['vdc_name'])
-    if decon.result['failed']:
-        amodule.fail_json(**decon.result)
+            subj.error()
+
+    if subj.result['failed']:
+        amodule.fail_json(**subj.result)
     else:
         # prepare VM facts to be returned as part of decon.result and then call exit_json(...)
         vdc_facts = None
-        if vm_should_exist:
-            if decon.result['changed']:
+        if subj.vm_should_exist:
+            if subj.result['changed']:
                 # There were changes to the VM - refresh VM facts.
-                vm_facts = decon.vm_facts(arg_vm_id=vm_id, arg_vdc_id=vdc_id)
-            # we need to extract VDC facts regardless of 'changed' flag, as it our source of information on
+                subj.vm_info = subj.vm_facts(arg_vm_id=subj.vm_id, arg_vdc_id=subj.vdc_id)
+            # we need to extract VDC facts regardless of 'changed' flag, as it is our source of information on
             # the VDC external IP address
-            _, vdc_facts = decon.vdc_find(arg_vdc_id=vdc_id)
-        decon.result['vm_facts'] = decs_vm_package_facts(vm_facts, vdc_facts, amodule.check_mode)
-        amodule.exit_json(**decon.result)
+            _, vdc_facts = subj.vdc_find(arg_vdc_id=subj.vdc_id)
+        subj.result['vm_facts'] = subj.package_facts(vdc_facts, amodule.check_mode)
+        amodule.exit_json(**subj.result)
 
 
 if __name__ == "__main__":
