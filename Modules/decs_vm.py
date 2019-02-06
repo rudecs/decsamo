@@ -554,7 +554,11 @@ class decsamo_vm(DECSController):
         if arg_check_mode or self.vm_info is None:
             # if in check mode (or void facts provided) return immediately with the default values
             return ret_dict
-            
+
+        if not self.vm_should_exist:
+            ret_dict['state'] = "ABSENT"
+            return ret_dict
+
         ret_dict['id'] = self.vm_info['id']
         ret_dict['name'] = self.vm_info['name']
         ret_dict['state'] = self.vm_info['status']

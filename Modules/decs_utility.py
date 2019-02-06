@@ -1096,7 +1096,10 @@ class DECSController(object):
         @return: dictionary with image specs. If no image found by the specified name, it returns emtpy dictionary
         and sets self.result['failed']=True.
         """
-        api_params = dict(cloudspaceId=arg_vdc_id)
+
+        _, vdc_facts = self._vdc_get_by_id(arg_vdc_id)
+        # api_params = dict(cloudspaceId=arg_vdc_id)
+        api_params = dict(accountId=vdc_facts['accountId'])
 
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/images/list", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
