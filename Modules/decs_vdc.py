@@ -12,7 +12,7 @@ ANSIBLE_METADATA = {'metadata_version': '1.1',
 
 DOCUMENTATION = '''
 ---
-module: decs_vm
+module: decs_vdc
 short_description: Manage virtual data centers (aka protected private network segments) in DECS cloud
 description: >
      This module can be used to create a virtual data center in Digital Energy cloud platform, modify its 
@@ -153,7 +153,7 @@ options:
         required: no
     vdc_name:
         description:
-        - Name of the VDC where the VM will be deployed (for new VMs) or can be found (for existing VMs).
+        - Name of the VDC to manage.
         - 'If both I(vdc_id) and I(vdc_name) are specified, I(vdc_name) will be ignored.'
         required: no
     workflow_callback:
@@ -221,8 +221,13 @@ def decs_vdc_package_facts(arg_vdc_facts, arg_check_mode=False):
                     vdc_ext_ip="",
                     )
 
-    if arg_check_mode or arg_vdc_facts is None:
-        # in check mode (or void facts provided) return immediately with the default values
+    if arg_check_mode:
+        # in check mode return immediately with the default values
+        return ret_dict
+
+    if arg_vdc_facts is None:
+        # if void facts provided - change state value to ABSENT and return
+        ret_dict['state'] = "ABSENT"
         return ret_dict
 
     ret_dict['vdc_id'] = arg_vdc_facts['id']
@@ -414,7 +419,7 @@ def main():
             decon.result['failed'] = False
             decon.result['changed'] = False
             decon.result['msg'] = ("Nothing to do as target state 'absent' was requested for "
-                                   "non-existent VDC name '{}'").format(amodule.params['name'])
+                                   "non-existent VDC name '{}'").format(amodule.params['vdc_name'])
         elif amodule.params['state'] in ('present', 'enabled'):
             # Target VDC does not exist yet - create it and store the returned ID in vdc_id variable for later use
             # To create VDC we need tenant name (to obtain ist ID), datacenter name and new VDC name - check
@@ -447,12 +452,13 @@ def main():
         amodule.fail_json(**decon.result)
     else:
         # prepare VDC facts to be returned as part of decon.result and then call exit_json(...)
+        vdc_facts = None
         if vdc_should_exist:
             if decon.results['changed']:
                 # If we arrive here, there is a good chance that the VDC is present - get fresh VDC facts from
                 # the cloud by VDC ID.
                 # Otherwise, VDC facts from previous call (when the VDC was still in existence) will be returned.
-                _, decon.result['vdc_facts'] = decon.vdc_find(arg_vdc_id=vdc_id)
+                _, vdc_facts = decon.vdc_find(arg_vdc_id=vdc_id)
         decon.result['vdc_facts'] = decs_vdc_package_facts(vdc_facts, amodule.check_mode)
         amodule.exit_json(**decon.result)
 
