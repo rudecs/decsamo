@@ -1457,7 +1457,7 @@ class DECSController(object):
 
 
     def tenant_find(self, arg_tenant_name):
-        """Find cloud tenant specified by the name anr return facts about the tenant. Tenant is required for certain
+        """Find cloud tenant specified by the name and return facts about the tenant. Tenant is required for certain
         cloud resource management tasks (e.g. creating new VDC).
         Returns non zero tenant ID and a dictionary with tenant details on success, 0 and empty dictionary otherwise.
         """
@@ -1467,7 +1467,9 @@ class DECSController(object):
             self.result['msg'] = "Cannot find tenant if tenant name is empty."
             self.amodule.fail_json(**self.result)
 
-        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/accounts/list", None)
+        api_params = dict()
+
+        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/accounts/list", api_params)
         if api_resp.status_code == 200:
             # Parse response to see if a tenant matching arg_tenant_name is found in the output
             # If it is found, assign its ID to the return variable and copy dictionary with the facts
