@@ -7,7 +7,8 @@ To install the modules for a particular playbook, do the following (assume your 
 1) create a directory to hold modules as ./myfolder/library
 2) copy decs_vm.py, decs_vdc.py and decs_jwt.py to 
 3) create a directory to hold utilities code that supports DECS Ansible modules as ./myfolder/module_utils
-4) copy decs_utility.py to 
+4) copy decs_utility.py to ./myfolder/module_utils
+
 The above layout is recommended by Ansible. More details can be found at https://docs.ansible.com/ansible/latest/user_guide/playbooks_best_practices.html#directory-layout
 
 Alternatively, you can setup the modules globally on your Ansible host.
