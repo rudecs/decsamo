@@ -9,7 +9,8 @@ To install the modules for a particular playbook, do the following (assume your 
 3) create a directory to hold utilities code that supports DECS Ansible modules as ./myfolder/module_utils
 4) copy decs_utility.py to ./myfolder/module_utils
 
-The above layout is recommended by Ansible. More details can be found at https://docs.ansible.com/ansible/latest/user_guide/playbooks_best_practices.html#directory-layout
+The above layout is recommended by Ansible. More details on this layout can be found at 
+https://docs.ansible.com/ansible/latest/user_guide/playbooks_best_practices.html#directory-layout
 
 Alternatively, you can setup the modules globally on your Ansible host.
 For Ansible 2.6+ on Ubuntu do the following as root:
@@ -20,4 +21,3 @@ If you have installed the modules globally, you can check module documentation a
 
 ansible-doc -t module decs_vm
 
-Please note that this module is still under testing and development, so bear with possible flaws and glitches for a time being (and especially if planning to use it for production right now).
