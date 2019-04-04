@@ -25,6 +25,7 @@ notes:
      - If you register module output as my_jwt, the JWT value is accessed as my_jwt.jwt
 requirements:
      - "python >= 2.6"
+     - requests module
 '''
 
 EXAMPLES = '''

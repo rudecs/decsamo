@@ -15,15 +15,16 @@ DOCUMENTATION = '''
 module: decs_vdc
 short_description: Manage virtual data centers (aka protected private network segments) in DECS cloud
 description: >
-     This module can be used to create a virtual data center in Digital Energy cloud platform, modify its 
-     characteristics, enable/disable its external network link, configure network port forwarding rules and 
+     This module can be used to create a virtual data center in Digital Energy cloud platform, modify its
+     characteristics, enable/disable its external network link, configure network port forwarding rules and
      delete a virtual data center.
 version_added: "2.2"
 author:
      - Sergey Shubin <sergey.shubin@digitalenergy.online>
 requirements:
      - python >= 2.6
-     - PyJWT
+     - PyJWT module
+     - requests module
      - decs_utils library module
 notes:
      - Environment variables can be used to pass selected parameters to the module, see details below.
@@ -35,14 +36,14 @@ options:
         description:
         - 'Application ID for authenticating to the DECS controller when I(authenticator=oauth2).'
         - 'Required if I(authenticator=oauth2).'
-        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_ID 
+        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_ID
            environment variable.'
         required: no
     app_secret:
         description:
         - 'Application API secret used for authenticating to the DECS controller when I(authenticator=oauth2).'
         - This parameter is required when I(authenticator=oauth2) and ignored in other modes.
-        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_SECRET 
+        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_SECRET
            environment variable.'
         required: no
     authenticator:
@@ -96,23 +97,23 @@ options:
     quotas:
         description:
         - Dictionary that defines resource quotas to be set on a newly created VDC.
-        - 'This parameter is optional and only used when creating new VDC. It is ignored for any operations on an 
+        - 'This parameter is optional and only used when creating new VDC. It is ignored for any operations on an
           existing VDC.'
         - 'The following keys are valid to set the resource quotas:'
         - ' - I(cpu) (integer) - limit on the total number of CPUs that can be consumed by VMs in this VDC.'
         - ' - I(ram) (integer) - limit on the total amount of RAM in GB that can be consumed by VMs in this VDC.'
-        - ' - I(disk) (integer) - limit on the total volume of disk space in GB that can be consumed by VMs 
+        - ' - I(disk) (integer) - limit on the total volume of disk space in GB that can be consumed by VMs
           in this VDC'
         - ' - I(ext_ips) (integer) - maximum number of external IP addresses that can be allocated to the VMs in
           this VDC'
-        - 'Each of the above keys is optional. For example, you may specify I(cpu) and I(ram) while omitting the 
-        other two keys. Then the quotas will be set on RAM and CPU leaving disk volume and the number of external 
+        - 'Each of the above keys is optional. For example, you may specify I(cpu) and I(ram) while omitting the
+        other two keys. Then the quotas will be set on RAM and CPU leaving disk volume and the number of external
         IP addresses unlimited.'
         required: no
     state:
         description:
         - Specify the desired state of the virtual data center at the exit of the module.
-        - 'Regardless of I(state), if VDC exists and is in one of [DEPLOYING, DESTROYING, MIGRATING, ] states, 
+        - 'Regardless of I(state), if VDC exists and is in one of [DEPLOYING, DESTROYING, MIGRATING, ] states,
           do nothing.'
         - 'If desired I(state=present):'
         - ' - VDC does not exist or is in DESTROYED state, create it according to the specifications.'
@@ -158,7 +159,7 @@ options:
         required: no
     workflow_callback:
         description:
-        - 'Callback URL that represents an application, which invokes this module (e.g. up-level orchestrator or 
+        - 'Callback URL that represents an application, which invokes this module (e.g. up-level orchestrator or
           end-user portal) and may except out-of-band updates on progress / exit status of the module run.'
         - API call at this URL will be used to relay such information to the application.
         - 'API call payload will include module-specific details about this module run and I(workflow_context).'
@@ -166,7 +167,7 @@ options:
     workflow_context:
         description:
         - 'Context data that will be included into the payload of the API call directed at I(workflow_callback) URL.'
-        - 'This context data is expected to uniquely identify the task carried out by this module invocation so 
+        - 'This context data is expected to uniquely identify the task carried out by this module invocation so
            that up-level orchestrator could match returned information to the its internal entities.'
         required: no
 '''
@@ -190,7 +191,7 @@ EXAMPLES = '''
 
 RETURN = '''
 vdc_facts:
-    description: facts about the virtual machine 
+    description: facts about the virtual machine
     returned: always
     type: dict
     sample:

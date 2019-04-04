@@ -482,7 +482,7 @@ class DECSController(object):
         self.result['changed'] = True
         return
 
-    def vm_extnetwork(self, arg_vm_dict, arg_desired_state, arg_ext_net_id=0):
+    def vm_extnetwork(self, arg_vm_dict, arg_desired_state, arg_ext_net_id=0, arg_force_delay=0):
         """Manage external network allocation for the VM.
         This method will either attach or detach external network IP address (aka direct IP address) to/from the
         specified VM.
@@ -493,6 +493,10 @@ class DECSController(object):
         @param arg_desired_state: specifies the desired state for the external network IP address attached to VM.
         Valid values are 'present' or 'absent'.
         @param arg_ext_net_id: specifies external network ID to get external IP address for this VM from.
+        @param arg_force_delay: if not 0, it tells the method to delay external network attachment for the number
+        of seconds passed in this argument. The use case for this is when external network is attached to a VM
+        during its creation and we need to make sure the guest OS is already started by the moment external 
+        network and corresponding vNIC are attached to the VM.
         """
 
         self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_extnetwork")
@@ -534,6 +538,7 @@ class DECSController(object):
         if arg_desired_state == 'present' and not ext_network_present:
             api_url = "/restmachine/cloudapi/machines/attachExternalNetwork"
         elif arg_desired_state == 'absent' and ext_network_present:
+            arg_force_delay = 0 # make sure there is no delay when we detach the network
             api_url = "/restmachine/cloudapi/machines/detachExternalNetwork"
         else:
             self.result['failed'] = False
@@ -543,6 +548,12 @@ class DECSController(object):
                                    ext_network_present, arg_ext_net_id,
                                    arg_desired_state)
             return
+
+        if arg_force_delay > 0:
+            # TODO: this is a quick fix for the case when we need guest OS started before
+            # the changes to the ext network will be recognized by the cloud init scripts and
+            # default gateways are reconfigured accordingly  
+            time.sleep(arg_force_delay)
 
         self.decs_api_call(requests.post, api_url, api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.

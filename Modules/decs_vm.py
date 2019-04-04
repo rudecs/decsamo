@@ -16,14 +16,15 @@ module: decs_vm
 short_description: Manage virtual machine in DECS cloud
 description: >
      This module can be used to create a virtual machine in Digital Energy cloud platform from a specified OS image,
-     modify virtual machine's CPU and RAM allocation, change its power state, configure network port forwarding rules, 
+     modify virtual machine's CPU and RAM allocation, change its power state, configure network port forwarding rules,
      restart guest OS and delete a virtual machine thus releasing corresponding cloud resources.
 version_added: "2.2"
 author:
      - Sergey Shubin <sergey.shubin@digitalenergy.online>
 requirements:
      - python >= 2.6
-     - PyJWT
+     - PyJWT module
+     - requests module
      - decs_utils library module
 notes:
      - Environment variables can be used to pass selected parameters to the module, see details below.
@@ -39,14 +40,14 @@ options:
         description:
         - 'Application ID for authenticating to the DECS controller when I(authenticator=oauth2).'
         - 'Required if I(authenticator=oauth2).'
-        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_ID 
+        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_ID
            environment variable.'
         required: no
     app_secret:
         description:
         - 'Application API secret used for authenticating to the DECS controller when I(authenticator=oauth2).'
         - This parameter is required when I(authenticator=oauth2) and ignored in other modes.
-        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_SECRET 
+        - 'If not found in the playbook or command line arguments, the value will be taken from DECS_APP_SECRET
            environment variable.'
         required: no
     authenticator:
@@ -57,7 +58,7 @@ options:
         required: yes
     boot_disk:
         description:
-        - Boot disk specification provided as a dictionary. 
+        - Boot disk specification provided as a dictionary.
         - Boot disk cannot be removed from VM.
         - Size change is not supported by the module. Use DECS API if you need to manage existing disk size.
         - 'This parameter is required for VM creation, valid at VM creation time only and ignored for operations on
@@ -65,8 +66,8 @@ options:
         - 'Valid keys are:'
         - ' - I(size) (integer) - size of the disk in GB'
         - ' - I(model) (string) - model name of a storage resource provider. Valid model names are C(ovs), C(iscsi)'
-        - ' - I(pool) (string) - pool from which boot disk resource will be provisioned. Pool names are storage 
-              model and DECS instance setup specific. If specified pool name is not found, it is expected that 
+        - ' - I(pool) (string) - pool from which boot disk resource will be provisioned. Pool names are storage
+              model and DECS instance setup specific. If specified pool name is not found, it is expected that
               the platform will provision from C(default) pool, which must always be present.'
         required: no
     controller_url:
@@ -91,14 +92,14 @@ options:
         required: no
     data_disks:
         description:
-        - The list of data disks to attach to the VM. 
+        - The list of data disks to attach to the VM.
         - This parameter is valid at VM creation time only and is ignored for operations on existing VMs.
         - Data disks resize or removal is not supported by the module. Use DECS API to manage existing data disks.
         - 'Each data disk is specified as a dictionary with the following keys:'
         - ' - I(size) (integer) - size of the data disk in GB.'
-        - ' - I(model) (string) - model name of the resource storage provider to use for disk deployment. Valid model 
+        - ' - I(model) (string) - model name of the resource storage provider to use for disk deployment. Valid model
               names are C(ovs), C(iscsi).'
-        - ' - I(pool) (string) -  pool name to deploy data disk to. Pool names are specific to storage model and 
+        - ' - I(pool) (string) -  pool name to deploy data disk to. Pool names are specific to storage model and
               DECS instance setup. If specified pool name is not found, it is expected that the platform will
               provision from the C(default) pool, which must always be present.'
         required: no
@@ -106,7 +107,7 @@ options:
         description:
         - Specify if an external network address should be attached to the VM.
         - Only one external network address can be attached to each VM (this limitation may be removed in the future).
-        - 'It does not automatically configure virtual NIC to be associated with the attached external network 
+        - 'It does not automatically configure virtual NIC to be associated with the attached external network
           address at the quest OS level. You need to complete setup at guest OS level by writing a corresponding task.'
         - 'To get attached IP address you would typically check vm_facts["interfaces"][1]["ipAddress"] - a string
           formatted like "123.45.67.89/24"'
@@ -127,8 +128,8 @@ options:
         - ID of the VM.
         - 'Either I(id) or a combination of VM name I(name) and VDC related parameters (either I(vdc_id) or a pair of
            I(tenant) and I(vdc_name) is required to manage an existing VM.'
-        - 'This parameter is not required (and ignored) when creating new VM as VM ID is assigned by cloud platform 
-           automatically and cannot be changed afterwards. If existing VM is identified by I(id), then I(tenant), 
+        - 'This parameter is not required (and ignored) when creating new VM as VM ID is assigned by cloud platform
+           automatically and cannot be changed afterwards. If existing VM is identified by I(id), then I(tenant),
            I(vdc_name) or I(vdc_id) parameters will be ignored.'
         required: no
     image_name:
@@ -206,7 +207,7 @@ options:
         - 'If desired I(state=poweredon):'
         - ' - VM does not exist, create it according to the specifications.'
         - ' - VM in RUNNING state, attempt resize if necessary, change network if necessary.'
-        - ' - VM in one of [PAUSED, HALTED] states, attempt resize if necessary, change network if necessary, next 
+        - ' - VM in one of [PAUSED, HALTED] states, attempt resize if necessary, change network if necessary, next
               start the VM.'
         - ' - VM in DELETED state, restore it.'
         - ' - VM in DESTROYED state, create it according to the specifications.'
@@ -225,7 +226,7 @@ options:
         choices: [ present, absent, poweredon, poweredoff, paused ]
     tags:
         description:
-        - String of custom tags to be assigned to the VM (This feature is not implemented yet!). 
+        - String of custom tags to be assigned to the VM (This feature is not implemented yet!).
         - These tags are arbitrary text that can be used for grouping or indexing the VMs by other applications.
         required: no
     tenant:
@@ -255,7 +256,7 @@ options:
         required: no
     workflow_callback:
         description:
-        - 'Callback URL that represents an application, which invokes this module (e.g. up-level orchestrator or 
+        - 'Callback URL that represents an application, which invokes this module (e.g. up-level orchestrator or
           end-user portal) and may except out-of-band updates on progress / exit status of the module run.'
         - API call at this URL will be used to relay such information to the application.
         - 'API call payload will include module-specific details about this module run and I(workflow_context).'
@@ -263,7 +264,7 @@ options:
     workflow_context:
         description:
         - 'Context data that will be included into the payload of the API call directed at I(workflow_callback) URL.'
-        - 'This context data is expected to uniquely identify the task carried out by this module invocation so 
+        - 'This context data is expected to uniquely identify the task carried out by this module invocation so
            that up-level orchestrator could match returned information to the its internal entities.'
         required: no
 '''
@@ -367,7 +368,7 @@ class decsamo_vm(DECSController):
                                          arg_amodule.params['oauth2_url'],
                                          arg_amodule.params['user'], arg_amodule.params['password'],
                                          arg_amodule.params['workflow_callback'], arg_amodule.params['workflow_context'])
-        
+
         self.vm_id, self.vm_info, self.vdc_id = self.vm_find(arg_vm_id=arg_amodule.params['id'],
                                                               arg_vm_name=arg_amodule.params['name'],
                                                               arg_vdc_id=arg_amodule.params['vdc_id'],
@@ -383,7 +384,7 @@ class decsamo_vm(DECSController):
         """No operation (NOP) handler for VM management by DECSAMo decs_vm module.
         This function is intended to be called from the main switch construct of the module
         when current state -> desired state change logic does not require any changes to
-        the actual VM state. 
+        the actual VM state.
         """
         self.result['failed'] = False
         self.result['changed'] = False
@@ -398,8 +399,8 @@ class decsamo_vm(DECSController):
     def error(self):
         """Error handler for VM management by DECSAMo decs_vm module.
         This function is intended to be called when an invalid state change is requested.
-        Invalid means that the current is invalid for any operations on the VM or the transition 
-        from current to desired state is not technically possible. 
+        Invalid means that the current is invalid for any operations on the VM or the transition
+        from current to desired state is not technically possible.
         """
         self.result['failed'] = True
         self.result['changed'] = False
@@ -481,13 +482,15 @@ class decsamo_vm(DECSController):
                                         arg_userdata=cloud_init_params)
             self.vm_info = self.vm_facts(arg_vm_id=self.vm_id, arg_vdc_id=self.vdc_id)
             self.vm_portforwards(self.vm_info, self.amodule.params['port_forwards'])
-            self.vm_extnetwork(self.vm_info, self.amodule.params['ext_network'], self.amodule.params['ext_network_id'])
+            self.vm_extnetwork(self.vm_info,
+                               self.amodule.params['ext_network'], self.amodule.params['ext_network_id'],
+                               25) # specify arg_force_delay=25 sec when creating the VM
             # TODO - configure tags for the new VM if corresponding parameters are specified
             # if decon.check_amodule_argument('tags', abort=False):
             #
             self.vm_should_exist = True
         return
-    
+
     def destroy(self):
         """VM destroy handler for VM management by DECSAMo decs_vm module.
         Note that this handler deletes the VM permanently together with all assigned disk resources.
@@ -510,7 +513,7 @@ class decsamo_vm(DECSController):
 
     def modify(self, arg_wait_cycles=0):
         """VM modify handler for VM management by DECSAMo decs_vm module.
-        This method is a convenience wrapper that calls individual VM modification functions as 
+        This method is a convenience wrapper that calls individual VM modification functions as
         follows:
           - modify portforwards;
           - modify presence of direct external network attachment;
@@ -529,13 +532,13 @@ class decsamo_vm(DECSController):
     def package_facts(self, arg_vdc_facts=None, arg_check_mode=False):
         """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
         be returned to the upstream Ansible engine at the completion of the module run.
-         
+
         @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get
         @param arg_check_mode: boolean that tells if this Ansible module is run in check mode
-        
+
         @return: dictionary of VM facts, containing suffucient information to manage the VM in subsequent tasks.
         """
-        
+
         ret_dict = dict(id=0,
                     name="none",
                     state="CHECK_MODE",
@@ -589,9 +592,9 @@ class decsamo_vm(DECSController):
 
         return ret_dict
 
-    @staticmethod    
+    @staticmethod
     def build_parameters():
-        """Build and return a dictionary of parameters expected by DECSAmo decs_vm module in a form 
+        """Build and return a dictionary of parameters expected by DECSAmo decs_vm module in a form
         accepted by AnsibleModule utility class.
         This dictionary is then used y AnsibleModule class instance to parse and validate parameters
         passed to the module from the playbook.
