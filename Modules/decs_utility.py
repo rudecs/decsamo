@@ -1098,19 +1098,27 @@ class DECSController(object):
         self.result['changed'] = True
         return
 
-    def image_find(self, arg_osimage_name, arg_vdc_id):
+    def image_find(self, arg_osimage_name, arg_vdc_id, arg_tenant_id=0):
         """Locates image specified by name and returns its facts as dictionary.
         Primary use of this function is to obtain the ID of the image identified by its name
 
         @param arg_os_image: string that contains the name of the OS image
+        @param arg_vdc_id: ID of the VDC to use as a reference when listing OS images
+        @param arg_tenant_id: ID of the tenant for which the image will be looked up. If set to 0, the tenant ID
+        will be obtained from the specified VDC's facts
 
         @return: dictionary with image specs. If no image found by the specified name, it returns emtpy dictionary
         and sets self.result['failed']=True.
         """
 
-        _, vdc_facts = self._vdc_get_by_id(arg_vdc_id)
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "image_find")
+
+        if arg_tenant_id == 0:
+            _, vdc_facts = self._vdc_get_by_id(arg_vdc_id)
+            arg_tenant_id = vdc_facts['accountId']
+        
         # api_params = dict(cloudspaceId=arg_vdc_id)
-        api_params = dict(accountId=vdc_facts['accountId'])
+        api_params = dict(accountId=arg_tenant_id)
 
         api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/images/list", api_params)
         # On success the above call will return here. On error it will abort execution by calling fail_json.
@@ -1120,7 +1128,8 @@ class DECSController(object):
                 return image_record
 
         self.result['failed'] = True
-        self.result['msg'] = "Failed to find OS image by name '{}'.".format(arg_osimage_name)
+        self.result['msg'] = "Failed to find OS image by name '{}' for tenant ID '{}'.".format(arg_osimage_name,
+                                                                                               arg_tenant_id)
         return None
 
     def vdc_delete(self, arg_vdc_id, arg_permanently=False):
@@ -1470,8 +1479,13 @@ class DECSController(object):
     def tenant_find(self, arg_tenant_name):
         """Find cloud tenant specified by the name and return facts about the tenant. Tenant is required for certain
         cloud resource management tasks (e.g. creating new VDC).
+
+        @param arg_tenant_name: name of the tenant to find.
+
         Returns non zero tenant ID and a dictionary with tenant details on success, 0 and empty dictionary otherwise.
         """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "tenant_find")
 
         if arg_tenant_name == "":
             self.result['failed'] = True

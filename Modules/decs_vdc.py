@@ -173,7 +173,7 @@ options:
 '''
 
 EXAMPLES = '''
-- name: create a VM named "SimpleVM" in the OVC cloud along with VDC named "ANewVDC" if it does not exist yet.
+- name: create a VDC named "SimpleVDC" in the OVC cloud if it does not exist yet, set quotas on CPU and exteranl IPs.
     decs_vdc:
       authenticator: oauth2
       app_id: {{ MY_APP_ID }}
@@ -209,7 +209,7 @@ from ansible.module_utils.decs_utility import *
 
 
 def decs_vdc_package_facts(arg_vdc_facts, arg_check_mode=False):
-    """Package a dictionary of VM facts according to the decs_vm module specification. This dictionary will
+    """Package a dictionary of VDC facts according to the decs_vdc module specification. This dictionary will
     be returned to the upstream Ansible engine at the completion of the module run.
 
     @param arg_vdc_facts: dictionary with VDC facts as returned by API call to .../cloudspaces/get

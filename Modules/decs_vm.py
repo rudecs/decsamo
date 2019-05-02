@@ -132,12 +132,21 @@ options:
            automatically and cannot be changed afterwards. If existing VM is identified by I(id), then I(tenant),
            I(vdc_name) or I(vdc_id) parameters will be ignored.'
         required: no
+    image_id:
+        description:
+        - ID of the OS image to use for VM provisioning.
+        - 'This parameter is valid at VM creation time only and is ignored for operations on existing VMs.'
+        - 'You need to know image ID, e.g. by extracting it with decs_imageid module and storing
+           in a variable prior to calling decs_vm.'
+        - 'If both I(image_id) and I(image_name) are specified, I(image_name) will be ignored.'
+        required: no
     image_name:
         description:
         - Name of the OS image to use for a new VM provisioning.
         - 'This parameter is valid at VM creation time only and is ignored for operations on existing VMs.'
         - 'The specified image name will be looked up in the target DECS controller and error will be generated if
-          no matching image is found'
+          no matching image is found.'
+        - 'If both I(image_id) and I(image_name) are specified, I(image_name) will be ignored.'
         required: no
     jwt:
         description:
@@ -426,14 +435,21 @@ class decsamo_vm(DECSController):
         # each of the following calls will abort if argument is missing
         self.check_amodule_argument('cpu')
         self.check_amodule_argument('ram')
-        self.check_amodule_argument('image_name')
         self.check_amodule_argument('boot_disk')
+        # either image_name or image_id must be present
+        if not self.check_amodule_argument('image_name', abort=False):
+            if not self.check_amodule_argument('image_id', abort=False):
+                # neither image_name nor image_id are set - abort the script
+                self.result['failed'] = True
+                self.result['msg'] = "Missing both 'image_name' and 'image_id'. You need to specify one to create a VM."
+                self.amodule.fail_json(**self.result)
+
         # if we get through here, all parameters required to create a VM should be set
         # create VDC if necessary
         if not self.vdc_id:
             # target VDC does not exist yet - create it and store the returned ID in vdc_id variable for later use
             # To create VDC we need tenant name (to obtain ist ID), datacenter name and new VDC name - check
-            # that these parameters are present and proceed. If any such check fails, the following calls will
+            # that these parameters are present and proceed. If any such check fails, check_amodule_argument calls will
             # abort the script
             self.check_amodule_argument('tenant')
             self.check_amodule_argument('datacenter')
@@ -459,9 +475,13 @@ class decsamo_vm(DECSController):
         # find OS image ID that is specified for the new VM
         osimage_facts = None
         if not self.result['failed']:
-            # no errors in the workflow thus far and we have target VDC ID - proceed with locating the
-            # requested OS image
-            osimage_facts = self.image_find(self.amodule.params['image_name'], self.vdc_id)
+            # no errors in the workflow thus far and we have target VDC ID - next locate requested OS image
+            if self.check_amodule_argument('image_id', abort=False):
+                # we have image ID from the module parameters - use it as is
+                osimage_facts = dict(id=self.amodule.params['image_id'])
+            else:
+                # no image ID specified, so we rely on image_name from module params - locate OS image by name
+                osimage_facts = self.image_find(self.amodule.params['image_name'], self.vdc_id)
         if not self.result['failed'] and osimage_facts is not None:
             # no errors thus far and we have: target VDC ID and requested OS image ID - we are ready to
             # provision the VM
@@ -628,6 +648,7 @@ class decsamo_vm(DECSController):
                              choices=['absent', 'present']),
             ext_network_id=dict(type='int', default=0, required=False),
             id=dict(type='int'),
+            image_id=dict(type='int', required=False),
             image_name=dict(type='str', required=False),
             jwt=dict(type='str',
                      required=False,
