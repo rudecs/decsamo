@@ -476,7 +476,7 @@ class decsamo_vm(DECSController):
         osimage_facts = None
         if not self.result['failed']:
             # no errors in the workflow thus far and we have target VDC ID - next locate requested OS image
-            if self.check_amodule_argument('image_id', abort=False):
+            if self.check_amodule_argument('image_id', abort=False) and self.amodule.params['image_id'] is not None:
                 # we have image ID from the module parameters - use it as is
                 osimage_facts = dict(id=self.amodule.params['image_id'])
             else:
