@@ -263,6 +263,14 @@ options:
         - 'This parameter may be required when managing VM by its I(name).'
         - 'If both I(vdc_id) and I(vdc_name) are specified, I(vdc_name) will be ignored.'
         required: no
+    verify_ssl:
+        description:
+        - 'Controls SSL verification mode when making API calls to DECS controller. Set it to False if you
+         want to disable SSL certificate verification. Intended use case is when you run module in a trusted
+         environment that uses self-signed certificates. Note that disabling SSL verification in any other
+         scenario can lead to security issues, so please know what you are doing.'
+        default: True
+        required: no
     workflow_callback:
         description:
         - 'Callback URL that represents an application, which invokes this module (e.g. up-level orchestrator or
@@ -676,6 +684,7 @@ class decsamo_vm(DECSController):
                       fallback=(env_fallback, ['DECS_USER'])),
             vdc_id=dict(type='int', default=0),
             vdc_name=dict(type='str', default=""),
+            verify_ssl=dict(type='bool', required=False, default=True),
             # wait_for_ip_address=dict(type='bool', required=False, default=False),
             workflow_callback=dict(type='str', required=False),
             workflow_context=dict(type='str', required=False),

@@ -84,6 +84,7 @@ class DECSController(object):
         self.user = arg_user
         self.session_key = ''
         # self.iconf = arg_iconf
+        self.verify_ssl = arg_amodule.params['verify_ssl']
         self.workflow_callback_present = False
         self.workflow_callback = arg_workflow_callback
         self.workflow_context = arg_workflow_context
@@ -200,7 +201,7 @@ class DECSController(object):
 
         # catch requests.exceptions.ConnectionError to handle incorrect oauth2_url case
         try:
-            token_get_resp = requests.post(token_get_url, data=req_data)
+            token_get_resp = requests.post(token_get_url, data=req_data, verify=self.verify_ssl)
         except requests.exceptions.ConnectionError:
             self.result['failed'] = True
             self.result['msg'] = "Failed to connect to '{}' to obtain JWT access token".format(token_get_url)
@@ -262,7 +263,7 @@ class DECSController(object):
         req_header = dict(Authorization="bearer {}".format(arg_jwt),)
 
         try:
-            api_resp = requests.post(req_url, headers=req_header)
+            api_resp = requests.post(req_url, headers=req_header, verify=self.verify_ssl)
         except requests.exceptions.ConnectionError:
             self.result['failed'] = True
             self.result['msg'] = "Failed to connect to '{}' while validating JWT".format(req_url)
@@ -307,7 +308,7 @@ class DECSController(object):
                         password=self.password,)
 
         try:
-            api_resp = requests.post(req_url, data=req_data)
+            api_resp = requests.post(req_url, data=req_data, verify=self.verify_ssl)
         except requests.exceptions.ConnectionError:
             self.result['failed'] = True
             self.result['msg'] = "Failed to connect to '{}' while validating legacy user".format(req_url)
@@ -366,7 +367,7 @@ class DECSController(object):
 
         while retry_counter > 0:
             try:
-                api_resp = arg_req_function(req_url, params=arg_params, headers=http_headers)
+                api_resp = arg_req_function(req_url, params=arg_params, headers=http_headers, verify=self.verify_ssl)
             except requests.exceptions.ConnectionError:
                 self.result['failed'] = True
                 self.result['msg'] = "Failed to connect to '{}' when calling DECS API.".format(api_resp.url)

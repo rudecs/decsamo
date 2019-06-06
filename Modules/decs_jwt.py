@@ -66,6 +66,7 @@ def decs_jwt_parameters():
         oauth2_url=dict(type='str',
                         required=True,
                         fallback=(env_fallback, ['DECS_OAUTH2_URL'])),
+        verify_ssl=dict(type='bool', required=False, default=True),
         workflow_callback=dict(type='str', required=False),
         workflow_context=dict(type='str', required=False),
     )
@@ -90,7 +91,7 @@ def main():
 
     # catch requests.exceptions.ConnectionError to handle incorrect oauth2_url case
     try:
-        token_get_resp = requests.post(token_get_url, data=req_data)
+        token_get_resp = requests.post(token_get_url, data=req_data, verify=amodule.params['verify_ssl'])
     except requests.exceptions.ConnectionError:
         result.update(failed=True)
         result['msg'] = "Failed to connect to {}".format(token_get_url)
