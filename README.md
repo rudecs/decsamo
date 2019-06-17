@@ -1,4 +1,8 @@
 # decsamo
+Ansible-модуль для управления ресурсами облачной платформы DECS
+
+Документация на русском языке: https://github.com/rudecs/decsamo/wiki
+
 Ansible modules for managing DECS cloud resources.
 
 You can find modules under Modules directory and some examples under Examples.
