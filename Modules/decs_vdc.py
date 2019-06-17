@@ -81,19 +81,6 @@ options:
         - 'This parameter is required if I(authenticator=legacy) and ignored in other authentication modes.'
         - If not specified in the playbook, the value will be taken from DECS_PASSWORD environment variable.
         required: no
-    port_forwards:
-        description:
-        - List of port forwarding rules for the VM.
-        - 'Each rule is a dictionary with the following keys:'
-        - ' - I(ext_port) (integer) - external port number;'
-        - ' - I(int_port) (integer) - internal port number;'
-        - ' - I(proto) (string) - protocol name, valid values are C(tcp) and C(udp).'
-        - 'If I(port_forwards) is specified for an existing VM and requested I(state) is one of C(present), C(paused),
-          C(poweredoff) or C(poweredon), then for each port forwarding rule specified:'
-        - ' - If the rule is not yet configured for the VM, it will be created;'
-        - ' - If the rule already exists for this VM, no action will be done;'
-        - ' - If some rule exists for this VM but not listed in the specified rules, it will be deleted.'
-        required: no
     quotas:
         description:
         - Dictionary that defines resource quotas to be set on a newly created VDC.
@@ -464,7 +451,7 @@ def main():
         # prepare VDC facts to be returned as part of decon.result and then call exit_json(...)
         vdc_facts = None
         if vdc_should_exist:
-            if decon.results['changed']:
+            if decon.result['changed']:
                 # If we arrive here, there is a good chance that the VDC is present - get fresh VDC facts from
                 # the cloud by VDC ID.
                 # Otherwise, VDC facts from previous call (when the VDC was still in existence) will be returned.
