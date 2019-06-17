@@ -143,7 +143,7 @@ class DECSController(object):
             # validate supplied JWT on the DECS controller
             self.validate_jwt()  # this call will abort the script if validation fails
             jwt_decoded = jwt.decode(self.jwt, verify=False)
-            self.decs_username = jwt_decoded['user'] + "@" + jwt_decoded['iss']
+            self.decs_username = jwt_decoded['username'] + "@" + jwt_decoded['iss']
         elif self.authenticator == "legacy":
             # obtain session id from the DECS controller and thus validate the the legacy user
             self.validate_legacy_user()  # this call will abort the script if validation fails
