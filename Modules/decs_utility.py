@@ -401,6 +401,9 @@ class DECSController(object):
         self.amodule.fail_json(**self.result)
         return None
 
+    ###################################
+    # VM resource manipulation methods
+    ###################################
     def vm_bootdisk_size(self, arg_vm_dict, arg_boot_disk):
         """Manages size of the boot disk. Note that the size of the boot disk can only grow. This method will issue
         a warning if you try to reduce the size of the boot disk.
@@ -659,7 +662,7 @@ class DECSController(object):
             # To locate VDC we need either non zero VDC ID or non empty VDC name - do corresponding sanity check
             if not arg_vdc_id and arg_vdc_name == "":
                 self.result['failed'] = True
-                self.result['msg'] = ("vm_find(): cannot locate VDC when 'vdc_id' iz zero and 'vdc_name' is empty at "
+                self.result['msg'] = ("vm_find(): cannot locate VDC when 'vdc_id' is zero and 'vdc_name' is empty at "
                                       "the same time.")
                 self.amodule.fail_json(**self.result)
 
@@ -868,7 +871,7 @@ class DECSController(object):
         if arg_vm_dict['status'] == "RUNNING":
             if arg_target_state == 'paused':
                 powerstate_api = "/restmachine/cloudapi/machines/pause"
-            elif arg_target_state == 'poweredoff':
+            elif arg_target_state in ('poweredoff', 'halted'):
                 powerstate_api = "/restmachine/cloudapi/machines/stop"
                 api_params['force'] = force_change
             elif arg_target_state == 'restarted':
@@ -1099,6 +1102,50 @@ class DECSController(object):
         self.result['changed'] = True
         return
 
+    def vm_wait4state(self, arg_vm_id, arg_state, arg_check_num=6, arg_sleep=5):
+        """Helper method to wait for the VM to enter the specified state. Intended usage of this method
+        is check if VM is already in HALTED state after calling vm_powerstate(...), as vm_powerstate() may
+        return before VM actually enters the target state.
+
+        @param arg_vm_id: ID of the VM.
+        @param arg_state: target powerstate of the VM. Make sure that you specify valid state, or the method
+        will return immediately with False.
+        @param arg_check_num: how many check attempts to take before giving up and returning False.
+        @param arg_sleep: sleep time in seconds between checks.
+
+        @return: True if the target state is detected within the specified number of checks. False otherwise or 
+        if an invalid target state is specified.
+
+        Note: this method will abort module execution if no target VM is found. 
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vm_check4state")
+
+        vm_id, vm_info, _ = self.vm_find(arg_vm_id)
+        if not vm_id:
+            self.result['failed'] = True
+            self.result['changed'] = False
+            self.result['msg'] = "Cannot find the specified VM ID {}".format(arg_vm_id)
+            self.amodule.fail_json(**self.result)
+
+        if arg_state not in ('RUNNING', 'PAUSED', 'HALTED', 'DELETED', 'DESTROYED'):
+            self.result['msg'] = "vm_wait4state: invalid target state '{}' specified.".format(arg_state)
+            return False
+
+        if vm_info['status'] == arg_state:
+            return True
+
+        for _ in range(0, arg_check_num):
+            time.sleep(arg_sleep)
+            _, vm_info, _ = self.vm_find(arg_vm_id)
+            if vm_info['status'] == arg_state:
+                return True
+
+        return False
+
+    ###################################
+    # OS image manipulation methods
+    ###################################
     def image_find(self, arg_osimage_name, arg_vdc_id, arg_tenant_id=0):
         """Locates image specified by name and returns its facts as dictionary.
         Primary use of this function is to obtain the ID of the image identified by its name
@@ -1132,7 +1179,12 @@ class DECSController(object):
         self.result['msg'] = "Failed to find OS image by name '{}' for tenant ID '{}'.".format(arg_osimage_name,
                                                                                                arg_tenant_id)
         return None
-
+        
+    ###################################
+    # VDC (cloud space) resource manipulation methods
+    ###################################
+    # TODO: the below methods will require rework once we abandon VDC in favour of a more advanced concept
+    ###################################
     def vdc_delete(self, arg_vdc_id, arg_permanently=False):
         """Deletes specified VDC.
 
@@ -1319,6 +1371,7 @@ class DECSController(object):
 
         #
         # TODO: what happens if user requests quota downsize, and what is currently deployed turns above the new quota?
+        # TODO: this method may need update since we introduced GPU functionality and corresponding GPU quota management.
         #
 
         self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "vdc_quotas")
@@ -1506,6 +1559,104 @@ class DECSController(object):
 
         return 0, None
 
+    ###################################
+    # GPU resource manipulation methods
+    ###################################
+    def gpu_attach(self, arg_vmid, arg_type, arg_mode):
+        """Attach GPU of specified type and mode to the VM identidied by ID.
+
+        @param arg_vmid: ID of the VM.
+        @param arg_type: type of GPU to allocate. Valid types are: NVIDIA, AMD, INTEL or DUMMY.
+        @param arg_mode: GPU mode to requues. Valid modes are: VIRTUAL or PASSTHROUGH.
+
+        @returns: non-zero integer ID of the attached vGPU resource on success.
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "gpu_attach")
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = ("gpu_attach() in check mode: attaching GPU of type {} & mode {} to VM ID {} was "
+                                  "requested.").format(arg_type, arg_mode, arg_vmid)
+            return 0
+
+        api_params=dict(
+            machineId=arg_vmid,
+            gpu_type=arg_type,
+            gpu_mode=arg_mode,
+        )
+
+        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/attachGpu", api_params)
+        # On success the above call will return here. On error it will abort execution by calling fail_json.
+        self.result['failed'] = False
+        self.result['changed'] = True
+        ret_vgpuid = int(api_resp.content)
+
+        return ret_vgpuid
+
+    def gpu_detach(self, arg_vmid, arg_vgpuid=-1):
+        """Detach specified vGPU resource from the VM identidied by ID.
+
+        @param arg_vmid: ID of the VM.
+        @param arg_vgpuid: ID of the vGPU to detach. If -1 is specified, all vGPUs (if any) will be detached.
+
+        @returns: True on success. On failure this method will abort playbook execution.
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "gpu_detach")
+
+        if self.amodule.check_mode:
+            self.result['failed'] = False
+            self.result['changed'] = False
+            self.result['msg'] = ("gpu_detach() in check mode: detaching GPU ID {} from VM ID {} was "
+                                  "requested.").format(arg_vgpuid, arg_vmid)
+            return True
+
+        api_params=dict(
+            machineId=arg_vmid,
+            vgpuid=arg_vgpuid,
+        )
+
+        self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/detachGpu", api_params)
+        # On success the above call will return here. On error it will abort execution by calling fail_json.
+        self.result['failed'] = False
+        self.result['changed'] = True
+
+        return True
+
+    def gpu_list(self, arg_vmid, arg_list_destroyed=False):
+        """Lists GPU resrouces (if any) attached to the specified VM.
+
+        @param arg_vmid: ID of the VM.
+        @param arg_list_destroyed: flag to control listing of vGPU resources in DESTROYED state that were once 
+        attached to this VM.
+
+        @returns: list of GPU object dictionaries, currently attached to the specified VM. If there are no GPUs, 
+        an emtpy list will be returned.
+        """
+
+        self.result['waypoints'] = "{} -> {}".format(self.result['waypoints'], "gpu_list")
+
+        api_params=dict(
+            machineId=arg_vmid,
+            list_destroyed=arg_list_destroyed,
+        )
+
+        ret_gpu_list = []
+
+        api_resp = self.decs_api_call(requests.post, "/restmachine/cloudapi/machines/listGpu", api_params)
+        # On success the above call will return here. On error it will abort execution by calling fail_json.
+        self.result['failed'] = False
+        self.result['changed'] = True
+        if api_resp.status_code == 200:
+            ret_gpu_list = json.loads(api_resp.content.decode('utf8'))
+
+        return ret_gpu_list
+    
+    ###################################
+    # Workflow callback stub methods - not fully implemented yet
+    ###################################
     def workflow_cb_set(self, arg_workflow_callback, arg_workflow_context=None):
         """Set workflow callback and workflow context value.
         """
