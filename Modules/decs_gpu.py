@@ -392,9 +392,9 @@ def main():
 
     decon.result['failed'] = False
     if decon.result['changed'] and amodule.params['vm_start']:
-        # if there were changes (whic is an indicator of the fact that we've been halting the VM)
+        # if there were changes (which is an indicator of the fact that we've been halting the VM)
         # and vm_start is set to True, restart the VM
-        decon.vm_powerstate(vm_info, 'start')
+        decon.vm_powerstate(vm_info, 'poweredon')
 
     # "Package" resulting GPU facts (a list of vGPU IDs) and exit the module
     decon.result['vgpus'] = ret_vgpus
