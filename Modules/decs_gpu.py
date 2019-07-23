@@ -351,19 +351,19 @@ def main():
                                    "GPU count must be positive.").format(gpu_count)
             amodule.fail_json(**decon.result)
 
-    if gpu_type not in ('NVIDIA', 'DUMMY'):
-        decon.result['failed'] = True
-        decon.result['changed'] = False
-        decon.result['msg'] = ("GPU type '{}' not supported. Type(s) supported by your version "
-                              "are 'NVIDIA' or 'DUMMY'.").format(gpu_type)
-        amodule.fail_json(**decon.result)
+        if gpu_type not in ('NVIDIA', 'DUMMY'):
+            decon.result['failed'] = True
+            decon.result['changed'] = False
+            decon.result['msg'] = ("GPU type '{}' not supported. Type(s) supported by your version "
+                                "are 'NVIDIA' or 'DUMMY'.").format(gpu_type)
+            amodule.fail_json(**decon.result)
 
-    if gpu_mode != 'PASSTHROUGH':
-        decon.result['failed'] = True
-        decon.result['changed'] = False
-        decon.result['msg'] = ("GPU mode '{}' not supported. Mode(s) supported by your version "
-                               "are 'PASSTHROUGH'.").format(gpu_mode)
-        amodule.fail_json(**decon.result)
+        if gpu_mode != 'PASSTHROUGH':
+            decon.result['failed'] = True
+            decon.result['changed'] = False
+            decon.result['msg'] = ("GPU mode '{}' not supported. Mode(s) supported by your version "
+                                "are 'PASSTHROUGH'.").format(gpu_mode)
+            amodule.fail_json(**decon.result)
 
     existing_gpus = decon.gpu_list(vm_id)
 
