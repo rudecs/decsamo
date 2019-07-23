@@ -65,9 +65,11 @@ options:
         - This parameter is required when I(state=present) and igonred when I(state=absent).
         - 'Valid keys are:'
         - ' - I(type) (string) - desired type of GPU resource. Valid types are C(nvidia), C(amd), C(intel). In 
-              the current implementation only C(nvidia) GPU type is supported.'
-        - ' - I(mode) (string) - desired mode of GPU resource. Valid modes are C(passthrough), C(virtual). In
-              the current implementation only C(passthrough) mode is supported.'
+              the current implementation only C(nvidia) GPU type is supported. The module will convert the supplied
+              string to uppercase when passing GPU type to upstream DECS API.'
+        - ' - I(mode) (string) - desired mode of GPU resource. Valid modes are C(passthrough), C(virtual). The 
+              module will convert the supplied string to uppercase when passing GPU type to upstream DECS API.
+              In the current implementation only C(passthrough) mode is supported.'
         - ' - I(profile) (int) - desired virtual profile of GPU resource. Relevant for NVIDIA virtual GPUs only.
               Not supported in the current implementation.'
         - ' - I(ram) (int) - desired volume of FB RAM for the GPU resource. Relevant for AMD virtual GPUs only.
@@ -338,8 +340,8 @@ def main():
             decon.result['msg'] = "For state='present' gpu_config must have both 'type' and 'mode' keys."
             amodule.fail_json(**decon.result)
 
-        gpu_type = amodule.params['gpu_config']['type'].lower()
-        gpu_mode = amodule.params['gpu_config']['mode'].lower()
+        gpu_type = amodule.params['gpu_config']['type'].upper()
+        gpu_mode = amodule.params['gpu_config']['mode'].upper()
         gpu_count = amodule.params['gpu_config'].get('count', 1)
 
         if gpu_count == 0:
@@ -349,18 +351,18 @@ def main():
                                    "GPU count must be positive.").format(gpu_count)
             amodule.fail_json(**decon.result)
 
-    if gpu_type not in ('nvidia', 'dummy'):
+    if gpu_type not in ('NVIDIA', 'DUMMY'):
         decon.result['failed'] = True
         decon.result['changed'] = False
         decon.result['msg'] = ("GPU type '{}' not supported. Type(s) supported by your version "
-                              "are 'nvidia' or 'dummy'.").format(gpu_type)
+                              "are 'NVIDIA' or 'DUMMY'.").format(gpu_type)
         amodule.fail_json(**decon.result)
 
-    if gpu_mode != 'passthrough':
+    if gpu_mode != 'PASSTHROUGH':
         decon.result['failed'] = True
         decon.result['changed'] = False
         decon.result['msg'] = ("GPU mode '{}' not supported. Mode(s) supported by your version "
-                               "are 'passthrough'.").format(gpu_mode)
+                               "are 'PASSTHROUGH'.").format(gpu_mode)
         amodule.fail_json(**decon.result)
 
     existing_gpus = decon.gpu_list(vm_id)
