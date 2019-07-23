@@ -676,7 +676,7 @@ class decsamo_vm(DECSController):
             ssh_key_user=dict(type='str', required=False),
             state=dict(type='str',
                        default='present',
-                       choices=['absent', 'paused', 'poweredoff', 'poweredon', 'present']),
+                       choices=['absent', 'paused', 'poweredoff', 'halted', 'poweredon', 'present']),
             tags=dict(type='str', required=False),
             tenant=dict(type='str', required=False, default=''),
             user=dict(type='str',
@@ -736,14 +736,14 @@ def main():
             elif amodule.params['state'] in ('present', 'poweredon'):
                 # check port forwards / check size / nop
                 subj.modify()
-            elif amodule.params['state'] in ('paused', 'poweredoff'):
+            elif amodule.params['state'] in ('paused', 'poweredoff', 'halted'):
                 # pause or power off the vm, then check port forwards / check size
                 subj.vm_powerstate(subj.vm_info, amodule.params['state'])
                 subj.modify(arg_wait_cycles=7)
         elif subj.vm_info['status'] in ("PAUSED", "HALTED"):
             if amodule.params['state'] == 'absent':
                 subj.destroy()
-            elif amodule.params['state'] in ('present', 'paused', 'poweredoff'):
+            elif amodule.params['state'] in ('present', 'paused', 'poweredoff', 'halted'):
                 subj.modify()
             elif amodule.params['state'] == 'poweredon':
                 subj.modify()
@@ -758,7 +758,7 @@ def main():
             elif amodule.params['state'] == 'absent':
                 subj.nop()
                 subj.vm_should_exist = False
-            elif amodule.params['state'] in ('paused', 'poweredoff'):
+            elif amodule.params['state'] in ('paused', 'poweredoff', 'halted'):
                 subj.error()
         elif subj.vm_info['status'] == "DESTROYED":
             if amodule.params['state'] in ('present', 'poweredon'):
@@ -767,7 +767,7 @@ def main():
             elif amodule.params['state'] == 'absent':
                 subj.nop()
                 subj.vm_should_exist = False
-            elif amodule.params['state'] in ('paused', 'poweredoff'):
+            elif amodule.params['state'] in ('paused', 'poweredoff', 'halted'):
                 subj.error()
     else:
         # Preexisting VM was not found.
@@ -777,7 +777,7 @@ def main():
             subj.nop()
         elif amodule.params['state'] in ('present', 'poweredon'):
             subj.create()
-        elif amodule.params['state'] in ('paused', 'poweredoff'):
+        elif amodule.params['state'] in ('paused', 'poweredoff', 'halted'):
             subj.error()
 
     if subj.result['failed']:
