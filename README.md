@@ -1,4 +1,4 @@
-# decsamo
+# decsamo Ver 1.0 (initial production quality release)
 Ansible-модуль для управления ресурсами облачной платформы DECS
 
 Документация на русском языке: https://github.com/rudecs/decsamo/wiki
