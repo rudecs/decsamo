@@ -148,6 +148,12 @@ options:
         - 'To manage VM by I(vm_name) you also need to specify either I(vdc_id) or a pair of I(vdc_name) and I(tenant).'
         - 'If both I(vm_name) and I(vm_id) are specified, I(vm_name) will be ignored and I(vm_id) used to locate the VM.'
         required: no
+    vm_start:
+        description:
+        - Control target VM powerstate at the module's completion.
+        - 'As GPU resource management requires target VM to be in powered-off state during the changes, module will
+          always put the VM into powered-off state for the changes and then try to restart it.'
+        - 'If you want to leave the VM in powered-off state after module completion, set I(vm_start) to False'
     workflow_callback:
         description:
         - 'Callback URL that represents an application, which invokes this module (e.g. up-level orchestrator or
@@ -172,6 +178,7 @@ EXAMPLES = '''
         mode: passthrough
         count: 1
       state: present
+      vm_start: False
       authenticator: oauth2
       app_id: {{ MY_APP_ID }}
       app_secret: {{ MY_APP_SECRET }}
