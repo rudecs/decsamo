@@ -209,10 +209,10 @@ options:
         - Specify the desired state of the virtual machine at the exit of the module.
         - 'Regardless of I(state), if VM exists and is in one of [MIGRATING, DESTROYING, ERROR] states, do nothing.'
         - 'If desired I(state=present):'
-        - ' - VM does not exist, create it according to the specifications.'
+        - ' - VM does not exist, create the VM according to the specifications and start it.'
         - ' - VM in one of [RUNNING, PAUSED, HALTED] states, attempt resize if necessary, change network if necessary.'
-        - ' - VM in DELETED state, restore it.'
-        - ' - VM in DESTROYED state, create it according to the specifications.'
+        - ' - VM in DELETED state, restore and start it.'
+        - ' - VM in DESTROYED state, recreate the VM according to the specifications and start it.'
         - 'If desired I(state=poweredon):'
         - ' - VM does not exist, create it according to the specifications.'
         - ' - VM in RUNNING state, attempt resize if necessary, change network if necessary.'
@@ -227,12 +227,14 @@ options:
         - ' - VM in RUNNING state, pause the VM, resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
         - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
-        - 'If desired I(state=poweredoff):'
+        - 'If desired I(state=poweredoff) or I(state=halted):'
+        - ' - VM does not exist, create the VM according to the specifications and leave it in HALTED state.'
         - ' - VM in RUNNING state, stop the VM, resize if necessary, change network if necessary.'
         - ' - VM in one of [PAUSED, HALTED] states, resize if necessary, change network if necessary.'
-        - ' - VM in one of [DELETED, DESTROYED] states, abort with an error.'
+        - ' - VM in DELETED state, abort with an error.'
+        - ' - VM in DESTROYED state, recreate the VM according to the specifications and leave it in HALTED state.'
         default: present
-        choices: [ present, absent, poweredon, poweredoff, paused ]
+        choices: [ present, absent, poweredon, poweredoff, halted, paused ]
     tags:
         description:
         - String of custom tags to be assigned to the VM (This feature is not implemented yet!).
@@ -438,6 +440,9 @@ class decsamo_vm(DECSController):
         """New VM creation handler for VM management by DECSAMo decs_vm module.
         This function checks for the presence of required parameters, creates specified VDC if
         necessary and then deploys a new VM into the specified VDC.
+
+        Note that this function requires DECORT API of version 3.3.1 or higher, as it expects
+        the ability of the cloud platform to create VMs in HALTED state.
         """
         # the following parameters must be present: cpu, ram, image_name, boot_disk
         # each of the following calls will abort if argument is missing
@@ -451,6 +456,10 @@ class decsamo_vm(DECSController):
                 self.result['failed'] = True
                 self.result['msg'] = "Missing both 'image_name' and 'image_id'. You need to specify one to create a VM."
                 self.amodule.fail_json(**self.result)
+
+        start_vm = True
+        if self.amodule.params['state'] in ('halted', 'poweredoff'):
+            start_vm = False
 
         # if we get through here, all parameters required to create a VM should be set
         # create VDC if necessary
@@ -507,12 +516,13 @@ class decsamo_vm(DECSController):
                                         arg_image_id=osimage_facts['id'],
                                         arg_data_disks=self.amodule.params['data_disks'],
                                         arg_annotation=self.amodule.params['annotation'],
-                                        arg_userdata=cloud_init_params)
+                                        arg_userdata=cloud_init_params,
+                                        arg_start_vm=start_vm)
             self.vm_info = self.vm_facts(arg_vm_id=self.vm_id, arg_vdc_id=self.vdc_id)
             self.vm_portforwards(self.vm_info, self.amodule.params['port_forwards'])
             self.vm_extnetwork(self.vm_info,
                                self.amodule.params['ext_network'], self.amodule.params['ext_network_id'],
-                               25) # specify arg_force_delay=25 sec when creating the VM
+                               25) # specify arg_force_delay=25 sec when calling vm_extnetwork as part of VM provisioning
             # TODO - configure tags for the new VM if corresponding parameters are specified
             # if decon.check_amodule_argument('tags', abort=False):
             #
@@ -761,13 +771,13 @@ def main():
             elif amodule.params['state'] in ('paused', 'poweredoff', 'halted'):
                 subj.error()
         elif subj.vm_info['status'] == "DESTROYED":
-            if amodule.params['state'] in ('present', 'poweredon'):
+            if amodule.params['state'] in ('present', 'poweredon', 'poweredoff', 'halted'):
                 subj.create()
                 pass
             elif amodule.params['state'] == 'absent':
                 subj.nop()
                 subj.vm_should_exist = False
-            elif amodule.params['state'] in ('paused', 'poweredoff', 'halted'):
+            elif amodule.params['state'] == 'paused':
                 subj.error()
     else:
         # Preexisting VM was not found.
@@ -775,9 +785,9 @@ def main():
         # If requested state is 'absent' - exit immediately, as there is nothing to do
         if amodule.params['state'] == 'absent':
             subj.nop()
-        elif amodule.params['state'] in ('present', 'poweredon'):
+        elif amodule.params['state'] in ('present', 'poweredon', 'poweredoff', 'halted'):
             subj.create()
-        elif amodule.params['state'] in ('paused', 'poweredoff', 'halted'):
+        elif amodule.params['state'] == 'paused':
             subj.error()
 
     if subj.result['failed']:
