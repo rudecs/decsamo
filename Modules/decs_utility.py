@@ -902,7 +902,8 @@ class DECSController(object):
                      arg_boot_disk, arg_image_id,
                      arg_data_disks=None,
                      arg_annotation="",
-                     arg_userdata=None):
+                     arg_userdata=None,
+                     arg_start_vm=True):
         """Manage VM provisioning.
         To remove VM use vm_remove method.
         To resize VM use vm_size, to manage VM power state use vm_powerstate method.
@@ -916,6 +917,8 @@ class DECSController(object):
         @param arg_data_disks: list of additional data disk sizes in GB. Pass empty list if no data disks needed.
         @param arg_annotation: string that specified the description for the VM.
         @param arg_userdata: additional paramters to pass to cloud-init facility of the guest OS.
+        @param arg_start_vm: set to False if you want the VM to be provisioned in HALTED state (requires DECORT API
+        version 3.3.1 or higher).
 
         @return ret_vm_id: integer value that specifies the VM ID of provisioned VM. In check mode it will return 0.
         """
@@ -948,7 +951,8 @@ class DECSController(object):
                           vcpus=arg_cpu, memory=arg_ram,
                           imageId=arg_image_id,
                           disksize=arg_boot_disk['size'],
-                          datadisks=data_disk_sizes,)
+                          datadisks=data_disk_sizes,
+                          start_machine=arg_start_vm)  # this parameter requires DECORT API ver 3.3.1 or higher
         if arg_userdata:
             api_params['userdata'] = json.dumps(arg_userdata)  # we need to pass a string object as "userdata" 
         
