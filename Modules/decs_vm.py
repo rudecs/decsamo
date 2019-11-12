@@ -208,6 +208,9 @@ options:
         description:
         - Specify the desired state of the virtual machine at the exit of the module.
         - 'Regardless of I(state), if VM exists and is in one of [MIGRATING, DESTROYING, ERROR] states, do nothing.'
+        - 'If desired I(state=check):'
+        - ' - Just check if VM exists in any state and return its current specifications.'
+        - ' - If VM does not exist, fail the task.'
         - 'If desired I(state=present):'
         - ' - VM does not exist, create the VM according to the specifications and start it.'
         - ' - VM in one of [RUNNING, PAUSED, HALTED] states, attempt resize if necessary, change network if necessary.'
@@ -234,7 +237,7 @@ options:
         - ' - VM in DELETED state, abort with an error.'
         - ' - VM in DESTROYED state, recreate the VM according to the specifications and leave it in HALTED state.'
         default: present
-        choices: [ present, absent, poweredon, poweredoff, halted, paused ]
+        choices: [ present, absent, poweredon, poweredoff, halted, paused, check ]
     tags:
         description:
         - String of custom tags to be assigned to the VM (This feature is not implemented yet!).
@@ -289,12 +292,12 @@ options:
 '''
 
 EXAMPLES = '''
-- name: create a VM named "SimpleVM" in the OVC cloud along with VDC named "ANewVDC" if it does not exist yet.
+- name: create a VM named "SimpleVM" in the DECS cloud along with VDC named "ANewVDC" if it does not exist yet.
     decs_vm:
       annotation: "VM created by decs_vm module"
       authenticator: oauth2
-      app_id: {{ MY_APP_ID }}
-      app_secret: {{ MY_APP_SECRET }}
+      app_id: "{{ MY_APP_ID }}"
+      app_secret: "{{ MY_APP_SECRET }}"
       controller_url: "https://ds1.digitalenergy.online"
       name: SimpleVM
       cpu: 2
@@ -324,7 +327,7 @@ EXAMPLES = '''
 - name: resize the above VM to CPU 4 and remove port forward rule for port number 80.
     decs_vm:
       authenticator: jwt
-      jwt: {{ MY_JWT }}
+      jwt: "{{ MY_JWT }}"
       controller_url: "https://ds1.digitalenergy.online"
       name: SimpleVM
       cpu: 4
@@ -341,14 +344,26 @@ EXAMPLES = '''
 - name: stop existing VM identified by the VM ID and down size it to CPU:RAM 1:2048 along the way.
     decs_vm:
       authenticator: jwt
-      jwt: {{ MY_JWT }}
+      jwt: "{{ MY_JWT }}"
       controller_url: "https://ds1.digitalenergy.online"
-      id: {{ TARGET_VM_ID }}
+      id: "{{ TARGET_VM_ID }}"
       cpu: 1
       ram: 2048
       state: poweredoff
     delegate_to: localhost
     register: simple_vm
+- name: check if VM exists and read in its specs.
+    decs_vm:
+      authenticator: oauth2
+      app_id: "{{ MY_APP_ID }}"
+      app_secret: "{{ MY_APP_SECRET }}"
+      controller_url: "https://ds1.digitalenergy.online"
+      name: "{{ TARGET_VM_NAME }}"
+      vdc_name: "{{ TARGET_VDC_NAME }}"
+      tenant: "{{ TRAGET_TENANT }}"
+      state: check
+    delegate_to: localhost
+    register: existing_vm
 '''
 
 RETURN = '''
@@ -603,8 +618,11 @@ class decsamo_vm(DECSController):
         ret_dict['id'] = self.vm_info['id']
         ret_dict['name'] = self.vm_info['name']
         ret_dict['state'] = self.vm_info['status']
-        ret_dict['username'] = self.vm_info['accounts'][0]['login']
-        ret_dict['password'] = self.vm_info['accounts'][0]['password']
+        # if the VM is an imported VM, then the 'accounts' list may be empty,
+        # so check for this case before trying to access login and passowrd values
+        if len(self.vm_info['accounts']):
+            ret_dict['username'] = self.vm_info['accounts'][0]['login']
+            ret_dict['password'] = self.vm_info['accounts'][0]['password']
 
         ret_dict['vdc_id'] = self.vm_info['cloudspaceid']
         if arg_vdc_facts is not None:
@@ -686,7 +704,7 @@ class decsamo_vm(DECSController):
             ssh_key_user=dict(type='str', required=False),
             state=dict(type='str',
                        default='present',
-                       choices=['absent', 'paused', 'poweredoff', 'halted', 'poweredon', 'present']),
+                       choices=['absent', 'paused', 'poweredoff', 'halted', 'poweredon', 'present', 'check']),
             tags=dict(type='str', required=False),
             tenant=dict(type='str', required=False, default=''),
             user=dict(type='str',
@@ -735,6 +753,28 @@ def main():
     # Initialize DECS VM instance object
     # This object does not necessarily represent an existing VM
     subj = decsamo_vm(amodule)
+
+    # handle state=check before any other logic
+    if amodule.params['state'] == 'check':
+        subj.result['changed'] = False
+        if subj.vm_id:
+            # VM is found - package facts and report success to Ansible
+            subj.result['failed'] = False
+            subj.vm_info = subj.vm_facts(arg_vm_id=subj.vm_id, arg_vdc_id=subj.vdc_id)
+            _, vdc_facts = subj.vdc_find(arg_vdc_id=subj.vdc_id)
+            subj.result['vm_facts'] = subj.package_facts(vdc_facts, amodule.check_mode)
+            amodule.exit_json(**subj.result)
+            # we leave the module at this point
+        else:
+            subj.result['failed'] = True
+            subj.result['msg'] = ("Cannot locate VM name '{}'. Other arguments are: VM ID {}, VDC name '{}', "
+                                  "VDC ID {}, tenant '{}'.").format(amodule.params['name'],
+                                                                    amodule.params['id'],
+                                                                    amodule.params['vdc_name'],
+                                                                    amodule.params['vdc_id'],
+                                                                    amodule.params['tenant'])
+            amodule.fail_json(**subj.result)
+            pass
 
     if subj.vm_id:
         if subj.vm_info['status'] in ("MIGRATING", "DESTROYING", "ERROR"):
