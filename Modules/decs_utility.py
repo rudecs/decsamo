@@ -444,7 +444,7 @@ class DECSController(object):
                                       "the changes.").format(arg_vm_dict['id'])
             return
 
-        if bdisk_size >= arg_boot_disk['size']:
+        if bdisk_size >= int(arg_boot_disk['size']): # add cast to int in case new boot disk size comes as string
             self.result['failed'] = False
             self.result['msg'] = ("vm_bootdisk_size(): new boot disk size {} for VM ID {} is not greater than the "
                                   "current size {} - no changes done.").format(arg_boot_disk['size'],
@@ -747,8 +747,10 @@ class DECSController(object):
                 # TODO: portforwarding API needs refactoring.
                 # NOTE!!! Another glitch in the API implementation - .../portforwarding/list returns port numbers as strings,
                 # while .../portforwarding/create expects them as integers!!!
-                if (int(existing_pfw['publicPort']) == requested_pfw['ext_port'] and
-                        int(existing_pfw['localPort']) == requested_pfw['int_port'] and
+                # Also: added type casting to int for requested_pfw in case the value comes as string from a complex
+                # variable in a loop
+                if (int(existing_pfw['publicPort']) == int(requested_pfw['ext_port']) and
+                        int(existing_pfw['localPort']) == int(requested_pfw['int_port']) and
                         existing_pfw['protocol'] == requested_pfw['proto']):
                     # full match - existing rule stays as is:
                     # mark requested rule spec as 'new'=False, existing rule spec as 'macthed'=True
