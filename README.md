@@ -1,4 +1,4 @@
-# decsamo Ver 1.5 (GPU enabled)
+# decsamo Ver 1.7Dev (type casting when passing vars from complex definition in loop)
 Ansible-модуль для управления ресурсами облачной платформы DECS
 
 Документация на русском языке: https://github.com/rudecs/decsamo/wiki
