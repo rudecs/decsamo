@@ -1,5 +1,5 @@
 #
-# Copyright: (c) 2018 Digital Energy Cloud Solutions LLC
+# Copyright: (c) 2018-2020 Digital Energy Cloud Solutions LLC
 # Apache License 2.0 (see http://www.apache.org/licenses/LICENSE-2.0.txt)
 
 #
@@ -1152,14 +1152,20 @@ class DECSController(object):
     ###################################
     # OS image manipulation methods
     ###################################
-    def image_find(self, arg_osimage_name, arg_vdc_id, arg_tenant_id=0):
+    def image_find(self, arg_osimage_name, arg_vdc_id, arg_tenant_id=0, arg_sepid=0, arg_pool=""):
         """Locates image specified by name and returns its facts as dictionary.
-        Primary use of this function is to obtain the ID of the image identified by its name
+        Primary use of this function is to obtain the ID of the image identified by its name and,
+        optionally SEP ID and/or pool name. Also note that only images in status CREATED are 
+        returned.
 
-        @param arg_os_image: string that contains the name of the OS image
-        @param arg_vdc_id: ID of the VDC to use as a reference when listing OS images
-        @param arg_tenant_id: ID of the tenant for which the image will be looked up. If set to 0, the tenant ID
+        @param (string) arg_os_image: string that contains the name of the OS image
+        @param (int) arg_vdc_id: ID of the VDC to use as a reference when listing OS images
+        @param (int) arg_tenant_id: ID of the tenant for which the image will be looked up. If set to 0, the tenant ID
         will be obtained from the specified VDC's facts
+        @param (int) arg_sepid: ID of the SEP where the image should be present. If set to 0, there will be no 
+        filtering by SEP ID and the first matching image will be returned.
+        @param (string) arg_pool: name of the pool where the image should be present. If set to empty string, there 
+        will be no filtering by pool name and first matching image will be returned.
 
         @return: dictionary with image specs. If no image found by the specified name, it returns emtpy dictionary
         and sets self.result['failed']=True.
@@ -1179,11 +1185,23 @@ class DECSController(object):
         image_list = json.loads(api_resp.content.decode('utf8'))
         for image_record in image_list:
             if image_record['name'] == arg_osimage_name and image_record['status'] == "CREATED":
-                return image_record
+                if arg_sepid == 0 and arg_pool == "":
+                    # if no filtering by SEP ID or pool name is requested, return the first match 
+                    return image_record
+                # if positive SEP ID and/or non-emtpy pool name are passed, try to match by them
+                full_match = True
+                if arg_sepid > 0 and arg_sepid != image_record['sepid']:
+                    full_match = False
+                if arg_pool != "" and arg_pool != image_record['pool']:
+                    full_match = False
+                if full_match:
+                    return image_record
 
         self.result['failed'] = True
-        self.result['msg'] = "Failed to find OS image by name '{}' for tenant ID '{}'.".format(arg_osimage_name,
-                                                                                               arg_tenant_id)
+        self.result['msg'] = ("Failed to find OS image by name '{}', SEP ID {}, pool '{}' for "
+                              "tenant ID '{}'.").format(arg_osimage_name,
+                                                        arg_sepid, arg_pool, 
+                                                        arg_tenant_id)
         return None
         
     ###################################

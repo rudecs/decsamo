@@ -1,4 +1,4 @@
-# decsamo Ver 1.7Dev (type casting when passing vars from complex definition in loop)
+# decsamo Ver 1.8 (module updates to use DECS Storage Framework, based on 1.7Dev)
 Ansible-модуль для управления ресурсами облачной платформы DECS
 
 Документация на русском языке: https://github.com/rudecs/decsamo/wiki

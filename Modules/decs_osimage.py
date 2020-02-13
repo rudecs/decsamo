@@ -1,5 +1,6 @@
 #!/usr/bin/python
-# Copyright: (c) 2019 Digital Energy Cloud Solutions LLC
+#
+# Copyright: (c) 2019-2020 Digital Energy Cloud Solutions LLC
 # Apache License 2.0 (see http://www.apache.org/licenses/LICENSE-2.0.txt)
 
 #
@@ -18,8 +19,8 @@ description: >
      This module can be used to obtain image ID of an OS image in DECS cloud to use with subsequent calls to
      decs_vm module for batch VM provisioning. It will speed up VM creation and save a bunch of extra calls to
      DECS cloud controller on each VM creation act.
-     Note that this module is effectively an information provisioner. It does not manage or change state of 
-     OS image objects in DECS cloud.
+     Note that this module is effectively an information provisioner. It is not designed to and does not manage 
+     nor change state of OS image (or any other) objects in DECS cloud.
 version_added: "2.2"
 author:
      - Sergey Shubin <sergey.shubin@digitalenergy.online>
@@ -28,6 +29,7 @@ requirements:
      - PyJWT module
      - requests module
      - decs_utils library module
+     - DECS cloud platform version 3.3.5 or better
 notes:
      - Environment variables can be used to pass selected parameters to the module, see details below.
      - Specified Oauth2 provider must be trusted by the DECS cloud controller on which JWT will be used.
@@ -81,6 +83,16 @@ options:
         - 'Password for authenticating to the DECS controller when I(authenticator=legacy).'
         - 'This parameter is required if I(authenticator=legacy) and ignored in other authentication modes.'
         - If not specified in the playbook, the value will be taken from DECS_PASSWORD environment variable.
+        required: no
+    pool:
+        description:
+        - 'Name of the storage pool, where the image should be found.'
+        - 'Omit this option if no matching by pool name is required. The first matching image will be returned."
+        required: no
+    sep_id:
+        description:
+        - 'ID of the SEP (Storage End-point Provider), where the image should be found.'
+        - 'Omit this option if no matching by SEP ID is required. The first matching image will be returned."
         required: no
     tenant:
         description:
@@ -143,6 +155,8 @@ osimage_facts:
         id: 100
         name: "Ubuntu 16.04 v1.0"
         size: 3
+        sep_id: 1
+        pool: "vmstore"
         type: Linux
         state: CREATED
 '''
@@ -184,6 +198,8 @@ def decs_osimage_package_facts(arg_osimage_facts, arg_check_mode=False):
     ret_dict['size'] = arg_osimage_facts['size']
     ret_dict['type'] = arg_osimage_facts['type']
     ret_dict['state'] = arg_osimage_facts['status']
+    ret_dict['sep_id'] = arg_osimage_facts['sepif']
+    ret_dict['pool'] = arg_osimage_facts['pool']
 
     return ret_dict
 
@@ -215,6 +231,8 @@ def decs_osimage_parameters():
                       required=False,
                       fallback=(env_fallback, ['DECS_PASSWORD']),
                       no_log=True),
+        pool=dict(type='str', required=False, default=""),
+        sep_id=dict(type='int', required=False, default=0),
         tenant=dict(type='str', required=True),
         user=dict(type='str',
                   required=False,
@@ -263,14 +281,15 @@ def main():
         decon.result['msg'] = ("Cannot find tenant '{}'").format(amodule.params['tenant'])
         amodule.fail_json(**decon.result)
 
-    osimage_facts = decon.image_find(amodule.params['image_name'], 0, tenant_id)
+    osimage_facts = decon.image_find(amodule.params['image_name'], 0, tenant_id, 
+                                     amodule.params['sep_id'], amodule.params['pool'])
     if decon.result['failed'] == True:
         # we failed to find the specified image - fail the module
         decon.result['changed'] = False
         amodule.fail_json(**decon.result)
 
     decon.result['osimage_facts'] = decs_osimage_package_facts(osimage_facts, amodule.check_mode)
-    decon.result['changed'] = False # decs_osimage is a read-only module - make sure the 'changed' flag is properly set
+    decon.result['changed'] = False # decs_osimage is a read-only module - make sure the 'changed' flag is set to False
     amodule.exit_json(**decon.result)
 
 
