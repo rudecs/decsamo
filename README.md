@@ -1,9 +1,14 @@
 # decsamo Ver 1.5 (GPU enabled)
+
+ВНИМАНИЕ: если вы используете облачную платформу версии 3.4.2 или выше, то вам необходимо использовать новый модуль DECORT (https://github.com/rudecs/decort-ansible)
+
 Ansible-модуль для управления ресурсами облачной платформы DECS
 
 Документация на русском языке: https://github.com/rudecs/decsamo/wiki
 
 Ansible modules for managing DECS cloud resources.
+
+NOTE: if you are using cloud platform version 3.4.2 or above, please use new module DECORT (https://github.com/rudecs/decort-ansible)
 
 You can find modules under Modules directory and some examples under Examples.
 
